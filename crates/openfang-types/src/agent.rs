@@ -392,7 +392,7 @@ impl Default for ModelConfig {
     fn default() -> Self {
         Self {
             provider: "ollama".to_string(),
-            model: "llama3.2".to_string(),
+            model: "qwen3.5:2b".to_string(),
             max_tokens: 4096,
             temperature: 0.7,
             system_prompt: "You are a helpful AI agent.".to_string(),

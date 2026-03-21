@@ -296,13 +296,13 @@ For Gemini specifically, either `GEMINI_API_KEY` or `GOOGLE_API_KEY` will work.
 | **Models** | 3 builtin + auto-discovered |
 
 **Available Models (builtin):**
-- `llama3.2` (Local)
+- `qwen3.5:2b` (Local)
 - `mistral:latest` (Local)
 - `phi3` (Local)
 
 **Setup:**
 1. Install Ollama from [ollama.com](https://ollama.com)
-2. Pull a model: `ollama pull llama3.2`
+2. Pull a model: `ollama pull qwen3.5:2b`
 3. Start the server: `ollama serve`
 4. No env var needed -- Ollama is always available
 
@@ -591,7 +591,7 @@ The complete catalog of all 51 builtin models, sorted by provider. Pricing is pe
 | 34 | `mistralai/Mixtral-8x22B-Instruct-v0.1` | Mixtral 8x22B (Together) | together | Balanced | 65,536 | 4,096 | $0.60 | $0.60 | Yes | No |
 | 35 | `accounts/fireworks/models/llama-v3p1-405b-instruct` | Llama 3.1 405B (Fireworks) | fireworks | Frontier | 131,072 | 16,384 | $3.00 | $3.00 | Yes | No |
 | 36 | `accounts/fireworks/models/mixtral-8x22b-instruct` | Mixtral 8x22B (Fireworks) | fireworks | Balanced | 65,536 | 4,096 | $0.90 | $0.90 | Yes | No |
-| 37 | `llama3.2` | Llama 3.2 (Ollama) | ollama | Local | 128,000 | 4,096 | $0.00 | $0.00 | Yes | No |
+| 37 | `qwen3.5:2b` | Qwen 3.5 2B (Ollama) | ollama | Local | 128,000 | 4,096 | $0.00 | $0.00 | Yes | No |
 | 38 | `mistral:latest` | Mistral (Ollama) | ollama | Local | 32,768 | 4,096 | $0.00 | $0.00 | Yes | No |
 | 39 | `phi3` | Phi-3 (Ollama) | ollama | Local | 128,000 | 4,096 | $0.00 | $0.00 | No | No |
 | 40 | `vllm-local` | vLLM Local Model | vllm | Local | 32,768 | 4,096 | $0.00 | $0.00 | Yes | No |
@@ -993,7 +993,7 @@ Fast:
   gemini-2.0-flash (Google Gemini) — 1M ctx
 
 Local:
-  llama3.2 (Ollama) — 128K ctx
+  qwen3.5:2b (Ollama) — 128K ctx
 ```
 
 ### `/providers`

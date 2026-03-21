@@ -2223,11 +2223,25 @@ fn builtin_models() -> Vec<ModelCatalogEntry> {
             aliases: vec!["nemotron-340b".into()],
         },
         // ══════════════════════════════════════════════════════════════
-        // Ollama (6) — local, no key required + dynamic discovery
+        // Ollama (7) — local, no key required + dynamic discovery
         // ══════════════════════════════════════════════════════════════
         ModelCatalogEntry {
             id: "llama3.2".into(),
             display_name: "Llama 3.2 (Ollama)".into(),
+            provider: "ollama".into(),
+            tier: ModelTier::Local,
+            context_window: 128_000,
+            max_output_tokens: 4_096,
+            input_cost_per_m: 0.0,
+            output_cost_per_m: 0.0,
+            supports_tools: true,
+            supports_vision: false,
+            supports_streaming: true,
+            aliases: vec![],
+        },
+        ModelCatalogEntry {
+            id: "qwen3.5:2b".into(),
+            display_name: "Qwen 3.5 2B (Ollama)".into(),
             provider: "ollama".into(),
             tier: ModelTier::Local,
             context_window: 128_000,

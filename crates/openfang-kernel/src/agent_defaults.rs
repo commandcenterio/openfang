@@ -1,8 +1,10 @@
 use openfang_types::agent::{AgentManifest, ModelConfig};
 use openfang_types::config::DefaultModelConfig;
+use tracing::warn;
 
-/// Build the fresh-install default assistant manifest from the effective kernel default model.
-pub(crate) fn build_default_assistant_manifest(default_model: &DefaultModelConfig) -> AgentManifest {
+const BUNDLED_ASSISTANT_TEMPLATE: &str = include_str!("../../../agents/assistant/agent.toml");
+
+fn fallback_default_assistant_manifest(default_model: &DefaultModelConfig) -> AgentManifest {
     AgentManifest {
         name: "assistant".to_string(),
         description: "General-purpose assistant".to_string(),
@@ -20,4 +22,25 @@ pub(crate) fn build_default_assistant_manifest(default_model: &DefaultModelConfi
         },
         ..Default::default()
     }
+}
+
+/// Build the fresh-install default assistant manifest from the effective kernel default model.
+pub(crate) fn build_default_assistant_manifest(default_model: &DefaultModelConfig) -> AgentManifest {
+    let mut manifest = match toml::from_str::<AgentManifest>(BUNDLED_ASSISTANT_TEMPLATE) {
+        Ok(manifest) => manifest,
+        Err(error) => {
+            warn!(%error, "Failed to parse bundled assistant template; falling back to minimal default assistant manifest");
+            return fallback_default_assistant_manifest(default_model);
+        }
+    };
+
+    manifest.model.provider = default_model.provider.clone();
+    manifest.model.model = default_model.model.clone();
+    manifest.model.api_key_env = if default_model.api_key_env.is_empty() {
+        None
+    } else {
+        Some(default_model.api_key_env.clone())
+    };
+    manifest.model.base_url = default_model.base_url.clone();
+    manifest
 }

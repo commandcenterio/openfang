@@ -604,6 +604,22 @@ impl OpenFangKernel {
             config.api_listen = listen;
         }
 
+        if let Ok(provider) = std::env::var("OPENFANG_DEFAULT_PROVIDER") {
+            let provider = provider.trim();
+            if !provider.is_empty() {
+                info!(provider, "Using default model provider from OPENFANG_DEFAULT_PROVIDER");
+                config.default_model.provider = provider.to_string();
+            }
+        }
+
+        if let Ok(model) = std::env::var("OPENFANG_DEFAULT_MODEL") {
+            let model = model.trim();
+            if !model.is_empty() {
+                info!(model, "Using default model from OPENFANG_DEFAULT_MODEL");
+                config.default_model.model = model.to_string();
+            }
+        }
+
         // OPENFANG_API_KEY: env var sets the API authentication key when
         // config.toml doesn't already have one.  Config file takes precedence.
         if config.api_key.trim().is_empty() {
@@ -6745,7 +6761,7 @@ mod tests {
             data_dir: home_dir.join("data"),
             default_model: DefaultModelConfig {
                 provider: "ollama".to_string(),
-                model: "llama3.2".to_string(),
+                model: "qwen3.5:2b".to_string(),
                 api_key_env: String::new(),
                 base_url: None,
             },
@@ -6818,7 +6834,9 @@ mod tests {
             .expect("default assistant should be spawned");
 
         assert_eq!(assistant.manifest.model.provider, "ollama");
-        assert_eq!(assistant.manifest.model.model, "llama3.2");
+        assert_eq!(assistant.manifest.model.model, "qwen3.5:2b");
+        assert!(assistant.manifest.capabilities.tools.iter().any(|tool| tool == "agent_send"));
+        assert!(assistant.manifest.tags.iter().any(|tag| tag == "default"));
 
         kernel.shutdown();
     }

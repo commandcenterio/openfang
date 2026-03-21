@@ -164,7 +164,7 @@ pub async fn probe_provider(provider: &str, base_url: &str) -> ProbeResult {
 
     // Parse model names
     let models = if is_ollama {
-        // Ollama: { "models": [ { "name": "llama3.2:latest", ... }, ... ] }
+        // Ollama: { "models": [ { "name": "qwen3.5:2b", ... }, ... ] }
         body.get("models")
             .and_then(|v| v.as_array())
             .map(|arr| {

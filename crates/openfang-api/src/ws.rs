@@ -1183,7 +1183,7 @@ fn classify_streaming_error(err: &openfang_kernel::error::KernelError) -> String
         }
         llm_errors::LlmErrorCategory::ModelNotFound => {
             if inner.contains("localhost:11434") || inner.contains("ollama") {
-                "Model not found on Ollama. Run `ollama pull <model>` first. Use /model to see options.".to_string()
+                "Model not found on Ollama. Run `ollama pull qwen3.5:2b` for the standard local setup. If semantic recall also warns, run `ollama pull nomic-embed-text`. Use /model to see options.".to_string()
             } else {
                 format!(
                     "{}. Use /model to see options.",

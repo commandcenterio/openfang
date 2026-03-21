@@ -1279,7 +1279,7 @@ openfang config get default_model.provider
 
 # Change provider
 openfang config set default_model.provider ollama
-openfang config set default_model.model llama3.2
+openfang config set default_model.model qwen3.5:2b
 openfang config set default_model.api_key_env ""
 
 # Manage API keys

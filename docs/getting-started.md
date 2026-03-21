@@ -133,7 +133,7 @@ Fresh installs now default to local Ollama. To change the provider, edit `~/.ope
 ```toml
 [default_model]
 provider = "ollama"                    # ollama, anthropic, openai, groq, etc.
-model = "llama3.2"                     # Model identifier for the provider
+model = "qwen3.5:2b"                   # Model identifier for the provider
 api_key_env = ""                       # Ollama does not require an API key
 
 [memory]
@@ -142,6 +142,8 @@ decay_rate = 0.05                      # Memory confidence decay rate
 [network]
 listen_addr = "127.0.0.1:4200"        # OFP listen address
 ```
+
+Fresh/new-agent defaults use this precedence: `OPENFANG_DEFAULT_PROVIDER` / `OPENFANG_DEFAULT_MODEL`, then `~/.openfang/config.toml`, then built-in defaults.
 
 Existing persisted agents are not auto-migrated to Ollama on restart. To move an
 existing agent, update its manifest explicitly or respawn it with the model you want.

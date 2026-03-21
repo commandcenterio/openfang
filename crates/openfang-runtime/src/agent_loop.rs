@@ -194,6 +194,13 @@ pub async fn run_agent_loop(
             }
             Err(e) => {
                 warn!("Embedding recall failed, falling back to text search: {e}");
+                let lower = e.to_string().to_lowercase();
+                if lower.contains("nomic-embed-text")
+                    && lower.contains("model")
+                    && lower.contains("not found")
+                {
+                    warn!("Ollama embedding model missing. Run `ollama pull nomic-embed-text` to enable semantic recall.");
+                }
                 memory
                     .recall(
                         user_message,
@@ -1201,6 +1208,13 @@ pub async fn run_agent_loop_streaming(
             }
             Err(e) => {
                 warn!("Embedding recall failed (streaming), falling back to text search: {e}");
+                let lower = e.to_string().to_lowercase();
+                if lower.contains("nomic-embed-text")
+                    && lower.contains("model")
+                    && lower.contains("not found")
+                {
+                    warn!("Ollama embedding model missing. Run `ollama pull nomic-embed-text` to enable semantic recall.");
+                }
                 memory
                     .recall(
                         user_message,

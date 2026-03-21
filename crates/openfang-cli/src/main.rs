@@ -1377,7 +1377,7 @@ fn detect_best_provider() -> (&'static str, &'static str, &'static str) {
     // Check if Ollama is running locally (no API key needed)
     if check_ollama_available() {
         ui::success("Detected Ollama running locally (no API key needed)");
-        return ("ollama", "", "llama3.2");
+        return ("ollama", "", "qwen3.5:2b");
     }
 
     let providers = provider_list();
@@ -1405,8 +1405,8 @@ fn detect_best_provider() -> (&'static str, &'static str, &'static str) {
 
     ui::hint("No LLM provider API keys found");
     ui::hint("Defaulting to Ollama-first config for local models");
-    ui::hint("Start Ollama: https://ollama.com  then run `ollama pull llama3.2`");
-    ("ollama", "", "llama3.2")
+    ui::hint("Start Ollama: https://ollama.com  then run `ollama pull qwen3.5:2b`");
+    ("ollama", "", "qwen3.5:2b")
 }
 
 /// Static list of supported providers: (id, env_var, default_model, display_name).
@@ -3852,7 +3852,7 @@ fn cmd_channel_setup(channel: Option<&str>) {
                 return;
             }
 
-            let config_block = "\n[channels.discord]\nbot_token_env = \"DISCORD_BOT_TOKEN\"\ndefault_agent = \"coder\"\n";
+            let config_block = "\n[channels.discord]\nbot_token_env = \"DISCORD_BOT_TOKEN\"\ndefault_agent = \"assistant\"\n";
             maybe_write_channel_config("discord", config_block);
 
             match dotenv::save_env_key("DISCORD_BOT_TOKEN", &token) {

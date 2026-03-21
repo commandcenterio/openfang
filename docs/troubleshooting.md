@@ -498,7 +498,7 @@ openfang init  # Start fresh
 ### Can I run OpenFang without an internet connection?
 
 Yes, if you use a local LLM provider:
-- **Ollama**: `ollama serve` + `ollama pull llama3.2`
+- **Ollama**: `ollama serve` + `ollama pull qwen3.5:2b`
 - **vLLM**: Self-hosted model server
 - **LM Studio**: GUI-based local model runner
 
@@ -506,7 +506,7 @@ Set the provider in config:
 ```toml
 [default_model]
 provider = "ollama"
-model = "llama3.2"
+model = "qwen3.5:2b"
 ```
 
 ### What's the difference between OpenFang and OpenClaw?

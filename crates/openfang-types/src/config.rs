@@ -409,7 +409,7 @@ impl Default for WebhookTriggerConfig {
 /// ```toml
 /// [[fallback_providers]]
 /// provider = "ollama"
-/// model = "llama3.2:latest"
+/// model = "qwen3.5:2b"
 /// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FallbackProviderConfig {
@@ -1266,7 +1266,7 @@ impl Default for KernelConfig {
             data_dir: home_dir.join("data"),
             home_dir,
             log_level: "info".to_string(),
-            api_listen: "127.0.0.1:50051".to_string(),
+            api_listen: "127.0.0.1:4200".to_string(),
             network_enabled: false,
             default_model: DefaultModelConfig::default(),
             memory: MemoryConfig::default(),
@@ -1460,7 +1460,7 @@ impl Default for DefaultModelConfig {
     fn default() -> Self {
         Self {
             provider: "ollama".to_string(),
-            model: "llama3.2".to_string(),
+            model: "qwen3.5:2b".to_string(),
             api_key_env: String::new(),
             base_url: None,
         }
@@ -3517,7 +3517,7 @@ mod tests {
     fn test_default_config() {
         let config = KernelConfig::default();
         assert_eq!(config.log_level, "info");
-        assert_eq!(config.api_listen, "127.0.0.1:50051");
+        assert_eq!(config.api_listen, "127.0.0.1:4200");
         assert!(!config.network_enabled);
     }
 
@@ -3802,14 +3802,14 @@ mod tests {
     fn test_fallback_config_serde_roundtrip() {
         let fb = FallbackProviderConfig {
             provider: "ollama".to_string(),
-            model: "llama3.2:latest".to_string(),
+            model: "qwen3.5:2b".to_string(),
             api_key_env: String::new(),
             base_url: None,
         };
         let json = serde_json::to_string(&fb).unwrap();
         let back: FallbackProviderConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(back.provider, "ollama");
-        assert_eq!(back.model, "llama3.2:latest");
+        assert_eq!(back.model, "qwen3.5:2b");
         assert!(back.api_key_env.is_empty());
         assert!(back.base_url.is_none());
     }
@@ -3825,7 +3825,7 @@ mod tests {
         let toml_str = r#"
             [[fallback_providers]]
             provider = "ollama"
-            model = "llama3.2:latest"
+            model = "qwen3.5:2b"
 
             [[fallback_providers]]
             provider = "groq"

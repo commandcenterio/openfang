@@ -351,12 +351,19 @@ pub async fn send_message(
     }
 
     // Check agent exists before processing
-    if state.kernel.registry.get(agent_id).is_none() {
+    let agent_entry = state.kernel.registry.get(agent_id);
+    if agent_entry.is_none() {
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({"error": "Agent not found"})),
         );
     }
+    let agent_model = agent_entry.map(|entry| {
+        (
+            entry.manifest.model.provider.clone(),
+            entry.manifest.model.model.clone(),
+        )
+    });
 
     // Resolve file attachments into image content blocks.
     // Pass them as content_blocks so the LLM receives them in the current turn
@@ -412,6 +419,7 @@ pub async fn send_message(
         }
         Err(e) => {
             tracing::warn!("send_message failed for agent {id}: {e}");
+            let err_text = format!("{e}");
             let status = if format!("{e}").contains("Agent not found") {
                 StatusCode::NOT_FOUND
             } else if format!("{e}").contains("quota") || format!("{e}").contains("Quota") {
@@ -421,10 +429,28 @@ pub async fn send_message(
             };
             (
                 status,
-                Json(serde_json::json!({"error": format!("Message delivery failed: {e}")})),
+                Json(serde_json::json!({"error": format_message_delivery_error(&err_text, agent_model.as_ref())})),
             )
         }
     }
+}
+
+fn format_message_delivery_error(
+    raw_error: &str,
+    agent_model: Option<&(String, String)>,
+) -> String {
+    let mut message = format!("Message delivery failed: {raw_error}");
+    let lower = raw_error.to_lowercase();
+    if lower.contains("model not found") {
+        if let Some((provider, model)) = agent_model {
+            if provider == "ollama" {
+                message.push_str(&format!(
+                    " Hint: Ollama is running, but model '{model}' is missing. Run `ollama pull {model}`. For the standard local-first setup, use `qwen3.5:2b`."
+                ));
+            }
+        }
+    }
+    message
 }
 
 /// GET /api/agents/:id/session — Get agent session (conversation history).
@@ -1579,7 +1605,7 @@ const CHANNEL_REGISTRY: &[ChannelMeta] = &[
             ChannelField { key: "intents", label: "Intents Bitmask", field_type: FieldType::Number, env_var: None, required: false, placeholder: "37376", advanced: true },
         ],
         setup_steps: &["Go to discord.com/developers/applications", "Create a bot and copy the token", "Paste it below"],
-        config_template: "[channels.discord]\nbot_token_env = \"DISCORD_BOT_TOKEN\"",
+        config_template: "[channels.discord]\nbot_token_env = \"DISCORD_BOT_TOKEN\"\ndefault_agent = \"assistant\"",
     },
     ChannelMeta {
         name: "slack", display_name: "Slack", icon: "SL",
@@ -2610,6 +2636,13 @@ pub async fn configure_channel(
                 (value.to_string(), field_def.field_type),
             );
         }
+    }
+
+    if name == "discord" && !config_fields.contains_key("default_agent") {
+        config_fields.insert(
+            "default_agent".to_string(),
+            ("assistant".to_string(), FieldType::Text),
+        );
     }
 
     // Write config.toml section
@@ -11112,7 +11145,7 @@ pub async fn comms_send(
         ),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"error": format!("Message delivery failed: {e}")})),
+            Json(serde_json::json!({"error": format_message_delivery_error(&format!("{e}"), None)})),
         ),
     }
 }

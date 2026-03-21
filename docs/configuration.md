@@ -55,9 +55,11 @@ The simplest working configuration for a fresh install is a local Ollama model. 
 
 [default_model]
 provider = "ollama"
-model = "llama3.2"
+model = "qwen3.5:2b"
 api_key_env = ""
 ```
+
+Fresh/new-agent defaults resolve in this order: `OPENFANG_DEFAULT_PROVIDER` / `OPENFANG_DEFAULT_MODEL`, then `[default_model]` from config, then built-in defaults.
 
 Or to switch to a cloud provider:
 
@@ -81,7 +83,7 @@ api_key_env = "ANTHROPIC_API_KEY"
 home_dir = "~/.openfang"             # OpenFang home directory
 data_dir = "~/.openfang/data"        # SQLite databases and data files
 log_level = "info"                   # trace | debug | info | warn | error
-api_listen = "127.0.0.1:50051"      # HTTP/WS API bind address
+api_listen = "127.0.0.1:4200"       # HTTP/WS API bind address
 network_enabled = false              # Enable OFP peer-to-peer network
 api_key = ""                         # API Bearer token (empty = unauthenticated)
 mode = "default"                     # stable | default | dev
@@ -91,14 +93,14 @@ usage_footer = "full"                # off | tokens | cost | full
 # --- Default LLM Provider ---
 [default_model]
 provider = "ollama"
-model = "llama3.2"
+model = "qwen3.5:2b"
 api_key_env = ""
 # base_url = "http://localhost:11434"  # Optional override
 
 # --- Fallback Providers ---
 [[fallback_providers]]
 provider = "ollama"
-model = "llama3.2:latest"
+model = "qwen3.5:2b"
 api_key_env = ""
 # base_url = "http://localhost:11434"  # Uses catalog default if omitted
 
@@ -225,7 +227,7 @@ These fields sit at the root of `config.toml` (not inside any `[section]`).
 | `home_dir` | path | `~/.openfang` | OpenFang home directory. Stores config, agents, skills. |
 | `data_dir` | path | `~/.openfang/data` | Directory for SQLite databases and persistent data. |
 | `log_level` | string | `"info"` | Log verbosity. One of: `trace`, `debug`, `info`, `warn`, `error`. |
-| `api_listen` | string | `"127.0.0.1:50051"` | Bind address for the HTTP/WebSocket/SSE API server. |
+| `api_listen` | string | `"127.0.0.1:4200"` | Bind address for the HTTP/WebSocket/SSE API server. |
 | `network_enabled` | bool | `false` | Enable the OFP peer-to-peer network layer. |
 | `api_key` | string | `""` (empty) | API authentication key. When set, all endpoints except `/api/health` require `Authorization: Bearer <key>`. Empty means unauthenticated (local development only). |
 | `mode` | string | `"default"` | Kernel operating mode. See below. |
@@ -258,7 +260,7 @@ Configures the primary LLM provider used when agents do not specify their own mo
 ```toml
 [default_model]
 provider = "ollama"
-model = "llama3.2"
+model = "qwen3.5:2b"
 api_key_env = ""
 # base_url = "http://localhost:11434"
 ```
@@ -266,13 +268,20 @@ api_key_env = ""
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `provider` | string | `"ollama"` | Provider name. Supported: `anthropic`, `gemini`, `openai`, `groq`, `openrouter`, `deepseek`, `together`, `mistral`, `fireworks`, `ollama`, `vllm`, `lmstudio`, `perplexity`, `cohere`, `ai21`, `cerebras`, `sambanova`, `huggingface`, `xai`, `replicate`. |
-| `model` | string | `"llama3.2"` | Model identifier. Aliases like `sonnet`, `haiku`, `gpt-4o`, `gemini-flash` are resolved by the model catalog. |
+| `model` | string | `"qwen3.5:2b"` | Model identifier. Aliases like `sonnet`, `haiku`, `gpt-4o`, `gemini-flash` are resolved by the model catalog. |
 | `api_key_env` | string | `""` | Name of the environment variable holding the API key. Leave empty for local providers like Ollama. The actual key is read from this env var at runtime, never stored in config. |
 | `base_url` | string or null | `null` | Override the API base URL. Useful for proxies or self-hosted endpoints. When `null`, the provider's default URL from the model catalog is used. |
 
 Changing `[default_model]` does not rewrite existing persisted agents on restart. If you want
 older agents to move to Ollama, migrate them explicitly by editing their manifests or respawning
 them with the new provider/model.
+
+You can override fresh/new-agent defaults without editing config:
+
+```bash
+export OPENFANG_DEFAULT_PROVIDER=ollama
+export OPENFANG_DEFAULT_MODEL=qwen3.5:2b
+```
 
 ---
 
@@ -1171,7 +1180,7 @@ Fallback provider chain. When the primary LLM provider (`[default_model]`) fails
 ```toml
 [[fallback_providers]]
 provider = "ollama"
-model = "llama3.2:latest"
+model = "qwen3.5:2b"
 api_key_env = ""
 # base_url = "http://localhost:11434"
 

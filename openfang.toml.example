@@ -3,11 +3,11 @@
 
 # API server settings
 # api_key = ""                               # Set to enable Bearer auth (recommended)
-# api_listen = "127.0.0.1:50051"             # HTTP API bind address (use 0.0.0.0 for public)
+# api_listen = "127.0.0.1:4200"              # HTTP API bind address (use 0.0.0.0 for public)
 
 [default_model]
 provider = "ollama"                       # "ollama", "anthropic", "gemini", "openai", "groq", etc.
-model = "llama3.2"                        # Local default for fresh installs
+model = "qwen3.5:2b"                      # Local default for fresh installs
 api_key_env = ""                          # Ollama does not require an API key
 # base_url = "http://localhost:11434"     # Optional: override API endpoint
 

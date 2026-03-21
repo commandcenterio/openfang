@@ -1057,6 +1057,9 @@ fn sanitize_agent_error(raw: &str) -> String {
     }
 
     if lower.contains("model not found") || lower.contains("model_not_found") {
+        if lower.contains("ollama") {
+            return "The configured Ollama model is unavailable. Run `ollama pull qwen3.5:2b` for the standard local setup. If semantic recall also warns, run `ollama pull nomic-embed-text`.".to_string();
+        }
         return "The requested model is currently unavailable.".to_string();
     }
 
