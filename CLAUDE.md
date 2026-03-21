@@ -1,13 +1,24 @@
 # OpenFang — Agent Instructions
 
+## Branch Workflow
+
+- `main` is reserved for syncing with the upstream source repository.
+- Do not implement feature work directly on `main`.
+- `michaels-main` is the long-lived working branch for merged customizations and validated integration work.
+- New feature branches should be created from `michaels-main`.
+
 ## Project Overview
+
 OpenFang is an open-source Agent Operating System written in Rust (14 crates).
+
 - Config: `~/.openfang/config.toml`
 - Default API: `http://127.0.0.1:4200`
 - CLI binary: `target/release/openfang.exe` (or `target/debug/openfang.exe`)
 
 ## Build & Verify Workflow
+
 After every feature implementation, run ALL THREE checks:
+
 ```bash
 cargo build --workspace --lib          # Must compile (use --lib if exe is locked)
 cargo test --workspace                 # All tests must pass (currently 1744+)
@@ -15,7 +26,9 @@ cargo clippy --workspace --all-targets -- -D warnings  # Zero warnings
 ```
 
 ## MANDATORY: Live Integration Testing
+
 **After implementing any new endpoint, feature, or wiring change, you MUST run live integration tests.** Unit tests alone are not enough — they can pass while the feature is actually dead code. Live tests catch:
+
 - Missing route registrations in server.rs
 - Config fields not being deserialized from TOML
 - Type mismatches between kernel and API layers
@@ -24,6 +37,7 @@ cargo clippy --workspace --all-targets -- -D warnings  # Zero warnings
 ### How to Run Live Integration Tests
 
 #### Step 1: Stop any running daemon
+
 ```bash
 tasklist | grep -i openfang
 taskkill //PID <pid> //F
@@ -32,19 +46,23 @@ sleep 3
 ```
 
 #### Step 2: Build fresh release binary
+
 ```bash
 cargo build --release -p openfang-cli
 ```
 
 #### Step 3: Start daemon with required API keys
+
 ```bash
 GROQ_API_KEY=<key> target/release/openfang.exe start &
 sleep 6  # Wait for full boot
 curl -s http://127.0.0.1:4200/api/health  # Verify it's up
 ```
+
 The daemon command is `start` (not `daemon`).
 
 #### Step 4: Test every new endpoint
+
 ```bash
 # GET endpoints — verify they return real data, not empty/null
 curl -s http://127.0.0.1:4200/api/<new-endpoint>
@@ -60,6 +78,7 @@ curl -s http://127.0.0.1:4200/api/<endpoint>  # Should reflect the update
 ```
 
 #### Step 5: Test real LLM integration
+
 ```bash
 # Get an agent ID
 curl -s http://127.0.0.1:4200/api/agents | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['id'])"
@@ -71,13 +90,16 @@ curl -s -X POST "http://127.0.0.1:4200/api/agents/<id>/message" \
 ```
 
 #### Step 6: Verify side effects
+
 After an LLM call, verify that any metering/cost/usage tracking updated:
+
 ```bash
 curl -s http://127.0.0.1:4200/api/budget       # Cost should have increased
 curl -s http://127.0.0.1:4200/api/budget/agents  # Per-agent spend should show
 ```
 
 #### Step 7: Verify dashboard HTML
+
 ```bash
 # Check that new UI components exist in the served HTML
 curl -s http://127.0.0.1:4200/ | grep -c "newComponentName"
@@ -85,12 +107,14 @@ curl -s http://127.0.0.1:4200/ | grep -c "newComponentName"
 ```
 
 #### Step 8: Cleanup
+
 ```bash
 tasklist | grep -i openfang
 taskkill //PID <pid> //F
 ```
 
 ### Key API Endpoints for Testing
+
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
 | `/api/health` | GET | Basic health check |
@@ -107,6 +131,7 @@ taskkill //PID <pid> //F
 | `/api/a2a/tasks/{id}/status` | GET | Check external A2A task status |
 
 ## Architecture Notes
+
 - **Don't touch `openfang-cli`** — user is actively building the interactive CLI
 - `KernelHandle` trait avoids circular deps between runtime and kernel
 - `AppState` in `server.rs` bridges kernel to API routes
@@ -115,6 +140,7 @@ taskkill //PID <pid> //F
 - Config fields need: struct field + `#[serde(default)]` + Default impl entry + Serialize/Deserialize derives
 
 ## Common Gotchas
+
 - `openfang.exe` may be locked if daemon is running — use `--lib` flag or kill daemon first
 - `PeerRegistry` is `Option<PeerRegistry>` on kernel but `Option<Arc<PeerRegistry>>` on `AppState` — wrap with `.as_ref().map(|r| Arc::new(r.clone()))`
 - Config fields added to `KernelConfig` struct MUST also be added to the `Default` impl or build fails

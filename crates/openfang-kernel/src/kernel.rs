@@ -40,6 +40,85 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, Weak};
 use tracing::{debug, info, warn};
 
+fn import_manifest_backed_agents(kernel: &OpenFangKernel) {
+    let agents_dir = kernel.config.home_dir.join("agents");
+    if !agents_dir.exists() {
+        return;
+    }
+
+    let read_dir = match std::fs::read_dir(&agents_dir) {
+        Ok(read_dir) => read_dir,
+        Err(e) => {
+            warn!(path = %agents_dir.display(), "Failed to read manifest-backed agents directory: {e}");
+            return;
+        }
+    };
+
+    let mut known_names: std::collections::HashSet<String> = kernel
+        .registry
+        .list()
+        .into_iter()
+        .map(|entry| entry.name.to_lowercase())
+        .collect();
+    let mut imported = 0usize;
+
+    for dir_entry in read_dir {
+        let dir_entry = match dir_entry {
+            Ok(dir_entry) => dir_entry,
+            Err(e) => {
+                warn!("Failed to inspect manifest-backed agent directory entry: {e}");
+                continue;
+            }
+        };
+
+        let manifest_path = dir_entry.path().join("agent.toml");
+        if !manifest_path.is_file() {
+            continue;
+        }
+
+        let manifest_str = match std::fs::read_to_string(&manifest_path) {
+            Ok(manifest_str) => manifest_str,
+            Err(e) => {
+                warn!(path = %manifest_path.display(), "Failed to read manifest-backed agent TOML: {e}");
+                continue;
+            }
+        };
+
+        let manifest = match toml::from_str::<AgentManifest>(&manifest_str) {
+            Ok(manifest) => manifest,
+            Err(e) => {
+                warn!(path = %manifest_path.display(), "Invalid manifest-backed agent TOML: {e}");
+                continue;
+            }
+        };
+
+        let name = manifest.name.trim().to_string();
+        if name.is_empty() {
+            warn!(path = %manifest_path.display(), "Skipping manifest-backed agent with empty name");
+            continue;
+        }
+
+        if known_names.contains(&name.to_lowercase()) {
+            continue;
+        }
+
+        match kernel.spawn_agent(manifest) {
+            Ok(agent_id) => {
+                known_names.insert(name.to_lowercase());
+                imported += 1;
+                info!(agent = %name, id = %agent_id, path = %manifest_path.display(), "Imported manifest-backed agent during boot");
+            }
+            Err(e) => {
+                warn!(agent = %name, path = %manifest_path.display(), "Failed to import manifest-backed agent during boot: {e}");
+            }
+        }
+    }
+
+    if imported > 0 {
+        info!("Imported {imported} manifest-backed agent(s) from disk");
+    }
+}
+
 /// The main OpenFang kernel — coordinates all subsystems.
 /// Stub LLM driver used when no providers are configured.
 /// Returns a helpful error so the dashboard still boots and users can configure providers.
@@ -1197,6 +1276,8 @@ impl OpenFangKernel {
                 tracing::warn!("Failed to load persisted agents: {e}");
             }
         }
+
+        import_manifest_backed_agents(&kernel);
 
         // If no agents exist (fresh install), spawn a default assistant
         if kernel.registry.list().is_empty() {
@@ -6706,6 +6787,42 @@ mod tests {
             entry.manifest.tool_blocklist.is_empty(),
             "hand activation should not set a runtime blocklist by default"
         );
+
+        kernel.shutdown();
+    }
+
+    #[test]
+    fn test_boot_imports_manifest_backed_agents_when_db_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home_dir = tmp.path().join("openfang-kernel-manifest-import-test");
+        let agent_dir = home_dir.join("agents").join("restored-agent");
+        std::fs::create_dir_all(&agent_dir).unwrap();
+
+        let manifest = AgentManifest {
+            name: "restored-agent".to_string(),
+            description: "Recovered from manifest".to_string(),
+            ..Default::default()
+        };
+        std::fs::write(
+            agent_dir.join("agent.toml"),
+            toml::to_string(&manifest).unwrap(),
+        )
+        .unwrap();
+
+        let config = KernelConfig {
+            home_dir: home_dir.clone(),
+            data_dir: home_dir.join("data"),
+            ..KernelConfig::default()
+        };
+
+        let kernel = OpenFangKernel::boot_with_config(config).expect("Kernel should boot");
+
+        assert!(kernel.registry.find_by_name("restored-agent").is_some());
+        assert!(kernel.registry.find_by_name("assistant").is_none());
+
+        let persisted = kernel.memory.load_all_agents().unwrap();
+        assert_eq!(persisted.len(), 1);
+        assert_eq!(persisted[0].name, "restored-agent");
 
         kernel.shutdown();
     }
