@@ -20,6 +20,12 @@ struct ProviderInfo {
 
 const PROVIDERS: &[ProviderInfo] = &[
     ProviderInfo {
+        name: "ollama",
+        env_var: "OLLAMA_API_KEY",
+        default_model: "llama3.2",
+        needs_key: false,
+    },
+    ProviderInfo {
         name: "groq",
         env_var: "GROQ_API_KEY",
         default_model: "llama-3.3-70b-versatile",
@@ -134,12 +140,6 @@ const PROVIDERS: &[ProviderInfo] = &[
         needs_key: false,
     },
     ProviderInfo {
-        name: "ollama",
-        env_var: "OLLAMA_API_KEY",
-        default_model: "llama3.2",
-        needs_key: false,
-    },
-    ProviderInfo {
         name: "vllm",
         env_var: "VLLM_API_KEY",
         default_model: "local-model",
@@ -221,22 +221,14 @@ impl WizardState {
         self.provider_order.clear();
         // Detected providers first
         for (i, p) in PROVIDERS.iter().enumerate() {
-            let detected = if p.name == "claude-code" {
-                openfang_runtime::drivers::claude_code::claude_code_available()
-            } else {
-                !p.env_var.is_empty() && std::env::var(p.env_var).is_ok()
-            };
+            let detected = provider_is_detected(p);
             if detected {
                 self.provider_order.push(i);
             }
         }
         // Then the rest
         for (i, p) in PROVIDERS.iter().enumerate() {
-            let detected = if p.name == "claude-code" {
-                openfang_runtime::drivers::claude_code::claude_code_available()
-            } else {
-                !p.env_var.is_empty() && std::env::var(p.env_var).is_ok()
-            };
+            let detected = provider_is_detected(p);
             if !detected {
                 self.provider_order.push(i);
             }
@@ -392,7 +384,7 @@ impl WizardState {
 
         let api_key_line = if !self.api_key_input.is_empty() {
             format!("api_key = \"{}\"", self.api_key_input)
-        } else if p.env_var.is_empty() {
+        } else if p.env_var.is_empty() || !p.needs_key {
             String::new()
         } else {
             format!("api_key_env = \"{}\"", p.env_var)
@@ -435,6 +427,22 @@ listen_addr = "127.0.0.1:4200"
         }
         self.step = WizardStep::Done;
     }
+}
+
+fn provider_is_detected(provider: &ProviderInfo) -> bool {
+    if provider.name == "claude-code" {
+        return openfang_runtime::drivers::claude_code::claude_code_available();
+    }
+
+    if provider.name == "ollama" {
+        return std::net::TcpStream::connect_timeout(
+            &std::net::SocketAddr::from(([127, 0, 0, 1], 11434)),
+            std::time::Duration::from_millis(500),
+        )
+        .is_ok();
+    }
+
+    !provider.env_var.is_empty() && std::env::var(provider.env_var).is_ok()
 }
 
 pub enum WizardResult {

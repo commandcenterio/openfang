@@ -668,11 +668,13 @@ openfang skill create
 **Behavior:**
 
 Prompts for:
+
 - Skill name
 - Description
 - Runtime (`python`, `node`, or `wasm`; defaults to `python`)
 
 Creates a directory under `~/.openfang/skills/<name>/` with:
+
 - `skill.toml` -- manifest file
 - `src/main.py` (or `src/index.js`) -- entry point with boilerplate
 
@@ -722,6 +724,7 @@ openfang channel setup [<CHANNEL>]
 **Supported channels:** `telegram`, `discord`, `slack`, `whatsapp`, `email`, `signal`, `matrix`.
 
 Each wizard:
+
 1. Displays step-by-step instructions for obtaining credentials.
 2. Prompts for tokens/credentials.
 3. Saves tokens to `~/.openfang/.env` with owner-only permissions.
@@ -1275,15 +1278,19 @@ openfang config show
 openfang config get default_model.provider
 
 # Change provider
-openfang config set default_model.provider anthropic
-openfang config set default_model.model claude-sonnet-4-20250514
-openfang config set default_model.api_key_env ANTHROPIC_API_KEY
+openfang config set default_model.provider ollama
+openfang config set default_model.model llama3.2
+openfang config set default_model.api_key_env ""
 
 # Manage API keys
 openfang config set-key anthropic
 openfang config test-key anthropic
 openfang config delete-key openai
 
+
+Changing `[default_model]` affects fresh installs and agents that explicitly use `default/default`.
+Persisted agents are not auto-migrated on restore; update their manifests explicitly if you want
+to move them to Ollama.
 # Open in editor
 openfang config edit
 ```

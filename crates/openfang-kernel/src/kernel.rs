@@ -1219,9 +1219,9 @@ impl OpenFangKernel {
                         .scheduler
                         .register(agent_id, entry.manifest.resources.clone());
 
-                    // Re-register in the in-memory registry (set state back to Running)
+                    // Re-register in the in-memory registry while preserving the
+                    // persisted lifecycle state exactly as stored.
                     let mut restored_entry = entry;
-                    restored_entry.state = AgentState::Running;
 
                     // Inherit kernel exec_policy for agents that lack one
                     if restored_entry.manifest.exec_policy.is_none() {
@@ -1235,45 +1235,12 @@ impl OpenFangKernel {
                         &mut restored_entry.manifest.resources,
                     );
 
-                    // Apply default_model to restored agents.
-                    //
-                    // Two cases:
-                    // 1. Agent has empty/default provider → always apply default_model
-                    // 2. Agent named "assistant" (auto-spawned) → update to match
-                    //    default_model so config.toml changes take effect on restart
-                    {
-                        let dm = &kernel.config.default_model;
-                        let is_default_provider = restored_entry.manifest.model.provider.is_empty()
-                            || restored_entry.manifest.model.provider == "default";
-                        let is_default_model = restored_entry.manifest.model.model.is_empty()
-                            || restored_entry.manifest.model.model == "default";
-                        let is_auto_spawned = restored_entry.name == "assistant"
-                            && restored_entry.manifest.description == "General-purpose assistant";
-                        if is_default_provider && is_default_model || is_auto_spawned {
-                            if !dm.provider.is_empty() {
-                                restored_entry.manifest.model.provider = dm.provider.clone();
-                            }
-                            if !dm.model.is_empty() {
-                                restored_entry.manifest.model.model = dm.model.clone();
-                            }
-                            if !dm.api_key_env.is_empty() {
-                                restored_entry.manifest.model.api_key_env =
-                                    Some(dm.api_key_env.clone());
-                            }
-                            if dm.base_url.is_some() {
-                                restored_entry
-                                    .manifest
-                                    .model
-                                    .base_url
-                                    .clone_from(&dm.base_url);
-                            }
-                        }
-                    }
+                    // Preserve persisted agent model settings exactly as stored.
+                    // Fresh installs and newly spawned agents use the current
+                    // `default_model`, but restored agents are not auto-migrated.
 
                     if let Err(e) = kernel.registry.register(restored_entry) {
                         tracing::warn!(agent = %name, "Failed to restore agent: {e}");
-                    } else {
-                        tracing::debug!(agent = %name, id = %agent_id, "Restored agent");
                     }
                 }
                 if count > 0 {
@@ -3942,6 +3909,9 @@ impl OpenFangKernel {
         let mut bg_agents: Vec<(openfang_types::agent::AgentId, String, ScheduleMode)> = Vec::new();
 
         for entry in &agents {
+            if entry.state != AgentState::Running {
+                continue;
+            }
             if matches!(entry.manifest.schedule, ScheduleMode::Reactive) {
                 continue;
             }
@@ -6607,6 +6577,34 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
+    fn persisted_entry_with_state(
+        name: &str,
+        state: AgentState,
+        schedule: ScheduleMode,
+    ) -> openfang_types::agent::AgentEntry {
+        openfang_types::agent::AgentEntry {
+            id: openfang_types::agent::AgentId::new(),
+            name: name.to_string(),
+            manifest: AgentManifest {
+                name: name.to_string(),
+                description: format!("Persisted agent: {name}"),
+                schedule,
+                ..Default::default()
+            },
+            state,
+            mode: openfang_types::agent::AgentMode::default(),
+            created_at: chrono::Utc::now(),
+            last_active: chrono::Utc::now(),
+            parent: None,
+            children: vec![],
+            session_id: openfang_types::agent::SessionId::new(),
+            tags: vec![],
+            identity: Default::default(),
+            onboarding_completed: false,
+            onboarding_completed_at: None,
+        }
+    }
+
     #[test]
     fn test_manifest_to_capabilities() {
         let mut manifest = AgentManifest {
@@ -6958,6 +6956,199 @@ mod tests {
             resolved.base_url.as_deref(),
             Some("https://api.groq.com/openai/v1")
         );
+
+        kernel.shutdown();
+    }
+
+    #[test]
+    fn test_boot_preserves_restored_agent_model_configuration() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home_dir = tmp.path().join("openfang-kernel-restore-preserve-model-test");
+        std::fs::create_dir_all(home_dir.join("data")).unwrap();
+        let db_path = home_dir.join("data").join("openfang.db");
+
+        let config = KernelConfig {
+            home_dir: home_dir.clone(),
+            data_dir: home_dir.join("data"),
+            default_model: DefaultModelConfig {
+                provider: "ollama".to_string(),
+                model: "llama3.2".to_string(),
+                api_key_env: String::new(),
+                base_url: None,
+            },
+            ..KernelConfig::default()
+        };
+
+        {
+            let memory = openfang_memory::MemorySubstrate::open(&db_path, 0.05).unwrap();
+            let entry = openfang_types::agent::AgentEntry {
+                id: openfang_types::agent::AgentId::new(),
+                name: "restored-agent".to_string(),
+                manifest: AgentManifest {
+                    name: "restored-agent".to_string(),
+                    description: "Persisted agent".to_string(),
+                    model: openfang_types::agent::ModelConfig {
+                        provider: "anthropic".to_string(),
+                        model: "claude-sonnet-4-20250514".to_string(),
+                        api_key_env: Some("ANTHROPIC_API_KEY".to_string()),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                state: AgentState::Suspended,
+                mode: openfang_types::agent::AgentMode::default(),
+                created_at: chrono::Utc::now(),
+                last_active: chrono::Utc::now(),
+                parent: None,
+                children: vec![],
+                session_id: openfang_types::agent::SessionId::new(),
+                tags: vec![],
+                identity: Default::default(),
+                onboarding_completed: false,
+                onboarding_completed_at: None,
+            };
+            memory.save_agent(&entry).unwrap();
+        }
+
+        let kernel = OpenFangKernel::boot_with_config(config).expect("Kernel should boot");
+        let restored = kernel
+            .registry
+            .find_by_name("restored-agent")
+            .expect("agent should be restored");
+
+        assert_eq!(restored.state, AgentState::Suspended);
+        assert_eq!(restored.manifest.model.provider, "anthropic");
+        assert_eq!(restored.manifest.model.model, "claude-sonnet-4-20250514");
+        assert_eq!(
+            restored.manifest.model.api_key_env.as_deref(),
+            Some("ANTHROPIC_API_KEY")
+        );
+
+        kernel.shutdown();
+    }
+
+    #[test]
+    fn test_boot_default_assistant_uses_ollama_defaults_on_fresh_install() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home_dir = tmp.path().join("openfang-kernel-fresh-ollama-default-test");
+
+        let config = KernelConfig {
+            home_dir: home_dir.clone(),
+            data_dir: home_dir.join("data"),
+            ..KernelConfig::default()
+        };
+
+        let kernel = OpenFangKernel::boot_with_config(config).expect("Kernel should boot");
+        let assistant = kernel
+            .registry
+            .find_by_name("assistant")
+            .expect("default assistant should be spawned");
+
+        assert_eq!(assistant.manifest.model.provider, "ollama");
+        assert_eq!(assistant.manifest.model.model, "llama3.2");
+
+        kernel.shutdown();
+    }
+
+    #[test]
+    fn test_boot_preserves_running_state_for_restored_agents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home_dir = tmp.path().join("openfang-kernel-restore-running-state-test");
+        std::fs::create_dir_all(home_dir.join("data")).unwrap();
+        let db_path = home_dir.join("data").join("openfang.db");
+
+        let config = KernelConfig {
+            home_dir: home_dir.clone(),
+            data_dir: home_dir.join("data"),
+            ..KernelConfig::default()
+        };
+
+        {
+            let memory = openfang_memory::MemorySubstrate::open(&db_path, 0.05).unwrap();
+            let entry = persisted_entry_with_state(
+                "running-restored-agent",
+                AgentState::Running,
+                ScheduleMode::Reactive,
+            );
+            memory.save_agent(&entry).unwrap();
+        }
+
+        let kernel = OpenFangKernel::boot_with_config(config).expect("Kernel should boot");
+        let restored = kernel
+            .registry
+            .find_by_name("running-restored-agent")
+            .expect("agent should be restored");
+
+        assert_eq!(restored.state, AgentState::Running);
+
+        kernel.shutdown();
+    }
+
+    #[tokio::test]
+    async fn test_start_background_agents_only_resumes_running_non_reactive_agents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home_dir = tmp.path().join("openfang-kernel-background-resume-test");
+        std::fs::create_dir_all(home_dir.join("data")).unwrap();
+        let db_path = home_dir.join("data").join("openfang.db");
+
+        let config = KernelConfig {
+            home_dir: home_dir.clone(),
+            data_dir: home_dir.join("data"),
+            ..KernelConfig::default()
+        };
+
+        {
+            let memory = openfang_memory::MemorySubstrate::open(&db_path, 0.05).unwrap();
+            memory
+                .save_agent(&persisted_entry_with_state(
+                    "running-periodic-agent",
+                    AgentState::Running,
+                    ScheduleMode::Periodic {
+                        cron: "every 5m".to_string(),
+                    },
+                ))
+                .unwrap();
+            memory
+                .save_agent(&persisted_entry_with_state(
+                    "suspended-periodic-agent",
+                    AgentState::Suspended,
+                    ScheduleMode::Periodic {
+                        cron: "every 5m".to_string(),
+                    },
+                ))
+                .unwrap();
+            memory
+                .save_agent(&persisted_entry_with_state(
+                    "running-reactive-agent",
+                    AgentState::Running,
+                    ScheduleMode::Reactive,
+                ))
+                .unwrap();
+        }
+
+        let kernel = Arc::new(OpenFangKernel::boot_with_config(config).expect("Kernel should boot"));
+        kernel.start_background_agents();
+
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        assert_eq!(kernel.background.active_count(), 1);
+
+        let running_periodic = kernel
+            .registry
+            .find_by_name("running-periodic-agent")
+            .expect("running periodic agent should be restored");
+        let suspended_periodic = kernel
+            .registry
+            .find_by_name("suspended-periodic-agent")
+            .expect("suspended periodic agent should be restored");
+        let running_reactive = kernel
+            .registry
+            .find_by_name("running-reactive-agent")
+            .expect("running reactive agent should be restored");
+
+        assert_eq!(running_periodic.state, AgentState::Running);
+        assert_eq!(suspended_periodic.state, AgentState::Suspended);
+        assert_eq!(running_reactive.state, AgentState::Running);
 
         kernel.shutdown();
     }

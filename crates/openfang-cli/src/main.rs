@@ -1390,12 +1390,12 @@ fn detect_best_provider() -> (&'static str, &'static str, &'static str) {
     // Check if Ollama is running locally (no API key needed)
     if check_ollama_available() {
         ui::success("Detected Ollama running locally (no API key needed)");
-        return ("ollama", "OLLAMA_API_KEY", "llama3.2");
+        return ("ollama", "", "llama3.2");
     }
     ui::hint("No LLM provider API keys found");
-    ui::hint("Groq offers a free tier: https://console.groq.com");
-    ui::hint("Or install Ollama for local models: https://ollama.com");
-    ("groq", "GROQ_API_KEY", "llama-3.3-70b-versatile")
+    ui::hint("Defaulting to Ollama-first config for local models");
+    ui::hint("Start Ollama: https://ollama.com  then run `ollama pull llama3.2`");
+    ("ollama", "", "llama3.2")
 }
 
 /// Static list of supported providers: (id, env_var, default_model, display_name).
@@ -1440,6 +1440,11 @@ fn write_config_if_missing(
     if config_path.exists() {
         ui::check_ok(&format!("Config already exists: {}", config_path.display()));
     } else {
+        let api_key_line = if api_key_env.is_empty() {
+            String::new()
+        } else {
+            format!("api_key_env = \"{}\"", api_key_env)
+        };
         let default_config = format!(
             r#"# OpenFang Agent OS configuration
 # See https://github.com/RightNow-AI/openfang for documentation
@@ -1450,7 +1455,7 @@ api_listen = "127.0.0.1:4200"
 [default_model]
 provider = "{provider}"
 model = "{model}"
-api_key_env = "{api_key_env}"
+{api_key_line}
 
 [memory]
 decay_rate = 0.05
@@ -2172,6 +2177,11 @@ fn cmd_doctor(json: bool, repair: bool) {
             let answer = prompt_input("    Create default config? [Y/n] ");
             if answer.is_empty() || answer.starts_with('y') || answer.starts_with('Y') {
                 let (provider, api_key_env, model) = detect_best_provider();
+                let api_key_line = if api_key_env.is_empty() {
+                    String::new()
+                } else {
+                    format!("api_key_env = \"{}\"", api_key_env)
+                };
                 let default_config = format!(
                     r#"# OpenFang Agent OS configuration
 # See https://github.com/RightNow-AI/openfang for documentation
@@ -2182,7 +2192,7 @@ api_listen = "127.0.0.1:4200"
 [default_model]
 provider = "{provider}"
 model = "{model}"
-api_key_env = "{api_key_env}"
+{api_key_line}
 
 [memory]
 decay_rate = 0.05

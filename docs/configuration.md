@@ -47,27 +47,25 @@ On Windows, `~` resolves to `C:\Users\<username>`. If the home directory cannot 
 
 ## Minimal Configuration
 
-The simplest working configuration only needs an LLM provider API key set as an environment variable. With no config file at all, OpenFang boots with Anthropic as the default provider:
+The simplest working configuration for a fresh install is a local Ollama model. With no config file at all, OpenFang boots with Ollama as the default provider:
 
 ```toml
 # ~/.openfang/config.toml
 # Minimal: just override the model if you want something other than defaults.
-# Set ANTHROPIC_API_KEY in your environment.
 
+[default_model]
+provider = "ollama"
+model = "llama3.2"
+api_key_env = ""
+```
+
+Or to switch to a cloud provider:
+
+```toml
 [default_model]
 provider = "anthropic"
 model = "claude-sonnet-4-20250514"
 api_key_env = "ANTHROPIC_API_KEY"
-```
-
-Or to use a local Ollama instance with no API key:
-
-```toml
-[default_model]
-provider = "ollama"
-model = "llama3.2:latest"
-base_url = "http://localhost:11434"
-api_key_env = ""
 ```
 
 ---
@@ -92,10 +90,10 @@ usage_footer = "full"                # off | tokens | cost | full
 
 # --- Default LLM Provider ---
 [default_model]
-provider = "anthropic"
-model = "claude-sonnet-4-20250514"
-api_key_env = "ANTHROPIC_API_KEY"
-# base_url = "https://api.anthropic.com"  # Optional override
+provider = "ollama"
+model = "llama3.2"
+api_key_env = ""
+# base_url = "http://localhost:11434"  # Optional override
 
 # --- Fallback Providers ---
 [[fallback_providers]]
@@ -259,18 +257,22 @@ Configures the primary LLM provider used when agents do not specify their own mo
 
 ```toml
 [default_model]
-provider = "anthropic"
-model = "claude-sonnet-4-20250514"
-api_key_env = "ANTHROPIC_API_KEY"
-# base_url = "https://api.anthropic.com"
+provider = "ollama"
+model = "llama3.2"
+api_key_env = ""
+# base_url = "http://localhost:11434"
 ```
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `provider` | string | `"anthropic"` | Provider name. Supported: `anthropic`, `gemini`, `openai`, `groq`, `openrouter`, `deepseek`, `together`, `mistral`, `fireworks`, `ollama`, `vllm`, `lmstudio`, `perplexity`, `cohere`, `ai21`, `cerebras`, `sambanova`, `huggingface`, `xai`, `replicate`. |
-| `model` | string | `"claude-sonnet-4-20250514"` | Model identifier. Aliases like `sonnet`, `haiku`, `gpt-4o`, `gemini-flash` are resolved by the model catalog. |
-| `api_key_env` | string | `"ANTHROPIC_API_KEY"` | Name of the environment variable holding the API key. The actual key is read from this env var at runtime, never stored in config. |
+| `provider` | string | `"ollama"` | Provider name. Supported: `anthropic`, `gemini`, `openai`, `groq`, `openrouter`, `deepseek`, `together`, `mistral`, `fireworks`, `ollama`, `vllm`, `lmstudio`, `perplexity`, `cohere`, `ai21`, `cerebras`, `sambanova`, `huggingface`, `xai`, `replicate`. |
+| `model` | string | `"llama3.2"` | Model identifier. Aliases like `sonnet`, `haiku`, `gpt-4o`, `gemini-flash` are resolved by the model catalog. |
+| `api_key_env` | string | `""` | Name of the environment variable holding the API key. Leave empty for local providers like Ollama. The actual key is read from this env var at runtime, never stored in config. |
 | `base_url` | string or null | `null` | Override the API base URL. Useful for proxies or self-hosted endpoints. When `null`, the provider's default URL from the model catalog is used. |
+
+Changing `[default_model]` does not rewrite existing persisted agents on restart. If you want
+older agents to move to Ollama, migrate them explicitly by editing their manifests or respawning
+them with the new provider/model.
 
 ---
 

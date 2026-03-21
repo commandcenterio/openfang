@@ -29,6 +29,14 @@ struct ProviderInfo {
 
 const PROVIDERS: &[ProviderInfo] = &[
     ProviderInfo {
+        name: "ollama",
+        display: "Ollama",
+        env_var: "OLLAMA_API_KEY",
+        default_model: "llama3.2",
+        needs_key: false,
+        hint: "recommended local default",
+    },
+    ProviderInfo {
         name: "groq",
         display: "Groq",
         env_var: "GROQ_API_KEY",
@@ -195,14 +203,6 @@ const PROVIDERS: &[ProviderInfo] = &[
         default_model: "claude-code/sonnet",
         needs_key: false,
         hint: "no API key",
-    },
-    ProviderInfo {
-        name: "ollama",
-        display: "Ollama",
-        env_var: "OLLAMA_API_KEY",
-        default_model: "llama3.2",
-        needs_key: false,
-        hint: "local",
     },
     ProviderInfo {
         name: "lmstudio",
@@ -389,25 +389,14 @@ impl State {
 
     fn build_provider_order(&mut self) {
         self.provider_order.clear();
-        let gemini_via_google = std::env::var("GOOGLE_API_KEY").is_ok();
         for (i, p) in PROVIDERS.iter().enumerate() {
-            let detected = if p.name == "claude-code" {
-                openfang_runtime::drivers::claude_code::claude_code_available()
-            } else {
-                (!p.env_var.is_empty() && std::env::var(p.env_var).is_ok())
-                    || (p.name == "gemini" && gemini_via_google)
-            };
+            let detected = provider_is_detected(p);
             if detected {
                 self.provider_order.push(i);
             }
         }
         for (i, p) in PROVIDERS.iter().enumerate() {
-            let detected = if p.name == "claude-code" {
-                openfang_runtime::drivers::claude_code::claude_code_available()
-            } else {
-                (!p.env_var.is_empty() && std::env::var(p.env_var).is_ok())
-                    || (p.name == "gemini" && gemini_via_google)
-            };
+            let detected = provider_is_detected(p);
             if !detected {
                 self.provider_order.push(i);
             }
@@ -445,12 +434,7 @@ impl State {
     }
 
     fn is_provider_detected(&self, prov_idx: usize) -> bool {
-        let p = &PROVIDERS[prov_idx];
-        if p.name == "claude-code" {
-            return openfang_runtime::drivers::claude_code::claude_code_available();
-        }
-        (!p.env_var.is_empty() && std::env::var(p.env_var).is_ok())
-            || (p.name == "gemini" && std::env::var("GOOGLE_API_KEY").is_ok())
+        provider_is_detected(&PROVIDERS[prov_idx])
     }
 
     /// Populate model_entries from the catalog for the selected provider.
@@ -1112,7 +1096,7 @@ complex_threshold = 500
     };
 
     let config_path = openfang_dir.join("config.toml");
-    let api_key_line = if p.env_var.is_empty() {
+    let api_key_line = if p.env_var.is_empty() || !p.needs_key {
         String::new()
     } else {
         format!("api_key_env = \"{}\"", p.env_var)
@@ -1157,6 +1141,23 @@ decay_rate = 0.05
             state.daemon_error = format!("Daemon failed: {e}");
         }
     }
+}
+
+fn provider_is_detected(provider: &ProviderInfo) -> bool {
+    if provider.name == "claude-code" {
+        return openfang_runtime::drivers::claude_code::claude_code_available();
+    }
+
+    if provider.name == "ollama" {
+        return std::net::TcpStream::connect_timeout(
+            &std::net::SocketAddr::from(([127, 0, 0, 1], 11434)),
+            std::time::Duration::from_millis(500),
+        )
+        .is_ok();
+    }
+
+    (!provider.env_var.is_empty() && std::env::var(provider.env_var).is_ok())
+        || (provider.name == "gemini" && std::env::var("GOOGLE_API_KEY").is_ok())
 }
 
 /// Check if the `openfang-desktop` binary exists next to the current exe.

@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BIN_PATH="$ROOT_DIR/target/release/openfang"
+
+if [[ "${1-}" == "--build-only" ]]; then
+  shift
+  cargo build --release -p openfang-cli "$@"
+  exit 0
+fi
+
+cargo build --release -p openfang-cli
+exec "$BIN_PATH" "$@"

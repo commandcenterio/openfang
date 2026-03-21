@@ -25,6 +25,15 @@ cargo test --workspace                 # All tests must pass (currently 1744+)
 cargo clippy --workspace --all-targets -- -D warnings  # Zero warnings
 ```
 
+## Dev Binary Workflow
+
+- Never trust `openfang` on `PATH` unless you have verified where it points.
+- During active development, prefer the repo-built binary instead of an installed/global executable.
+- Canonical dev entrypoint: `./scripts/dev-openfang start`
+- The wrapper above rebuilds `openfang-cli` and then executes the binary from this fork's `target/release/` output.
+- If you intentionally use a `PATH` binary, first verify it with `command -v openfang`.
+- Before diagnosing runtime bugs, rebuild and rerun the fork binary so stale executables do not create false regressions.
+
 ## MANDATORY: Live Integration Testing
 
 **After implementing any new endpoint, feature, or wiring change, you MUST run live integration tests.** Unit tests alone are not enough — they can pass while the feature is actually dead code. Live tests catch:
@@ -48,13 +57,13 @@ sleep 3
 #### Step 2: Build fresh release binary
 
 ```bash
-cargo build --release -p openfang-cli
+./scripts/dev-openfang --build-only
 ```
 
 #### Step 3: Start daemon with required API keys
 
 ```bash
-GROQ_API_KEY=<key> target/release/openfang.exe start &
+GROQ_API_KEY=<key> ./scripts/dev-openfang start &
 sleep 6  # Wait for full boot
 curl -s http://127.0.0.1:4200/api/health  # Verify it's up
 ```
@@ -116,7 +125,7 @@ taskkill //PID <pid> //F
 ### Key API Endpoints for Testing
 
 | Endpoint | Method | Purpose |
-|----------|--------|---------|
+| -------- | ------ | ------- |
 | `/api/health` | GET | Basic health check |
 | `/api/agents` | GET | List all agents |
 | `/api/agents/{id}/message` | POST | Send message (triggers LLM) |
@@ -142,6 +151,7 @@ taskkill //PID <pid> //F
 ## Common Gotchas
 
 - `openfang.exe` may be locked if daemon is running — use `--lib` flag or kill daemon first
+- A stale installed `openfang` binary can mimic runtime bugs — prefer `./scripts/dev-openfang` during development
 - `PeerRegistry` is `Option<PeerRegistry>` on kernel but `Option<Arc<PeerRegistry>>` on `AppState` — wrap with `.as_ref().map(|r| Arc::new(r.clone()))`
 - Config fields added to `KernelConfig` struct MUST also be added to the `Default` impl or build fails
 - `AgentLoopResult` field is `.response` not `.response_text`

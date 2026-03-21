@@ -6,10 +6,10 @@
 # api_listen = "127.0.0.1:50051"             # HTTP API bind address (use 0.0.0.0 for public)
 
 [default_model]
-provider = "anthropic"                    # "anthropic", "gemini", "openai", "groq", "ollama", etc.
-model = "claude-sonnet-4-20250514"        # Model identifier
-api_key_env = "ANTHROPIC_API_KEY"         # Environment variable holding API key
-# base_url = "https://api.anthropic.com"  # Optional: override API endpoint
+provider = "ollama"                       # "ollama", "anthropic", "gemini", "openai", "groq", etc.
+model = "llama3.2"                        # Local default for fresh installs
+api_key_env = ""                          # Ollama does not require an API key
+# base_url = "http://localhost:11434"     # Optional: override API endpoint
 
 [memory]
 decay_rate = 0.05                         # Memory confidence decay rate

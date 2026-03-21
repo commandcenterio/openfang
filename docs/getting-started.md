@@ -128,13 +128,13 @@ Add the export to your shell profile (`~/.bashrc`, `~/.zshrc`, etc.) to persist 
 
 ### Edit the Config
 
-The default config uses Anthropic. To change the provider, edit `~/.openfang/config.toml`:
+Fresh installs now default to local Ollama. To change the provider, edit `~/.openfang/config.toml`:
 
 ```toml
 [default_model]
-provider = "groq"                      # anthropic, openai, groq, ollama, etc.
-model = "llama-3.3-70b-versatile"      # Model identifier for the provider
-api_key_env = "GROQ_API_KEY"           # Env var holding the API key
+provider = "ollama"                    # ollama, anthropic, openai, groq, etc.
+model = "llama3.2"                     # Model identifier for the provider
+api_key_env = ""                       # Ollama does not require an API key
 
 [memory]
 decay_rate = 0.05                      # Memory confidence decay rate
@@ -142,6 +142,9 @@ decay_rate = 0.05                      # Memory confidence decay rate
 [network]
 listen_addr = "127.0.0.1:4200"        # OFP listen address
 ```
+
+Existing persisted agents are not auto-migrated to Ollama on restart. To move an
+existing agent, update its manifest explicitly or respawn it with the model you want.
 
 ### Verify Your Setup
 
@@ -284,6 +287,7 @@ Press Ctrl+C to stop.
 ```
 
 The daemon provides:
+
 - **REST API** at `http://127.0.0.1:4200/api/`
 - **WebSocket** endpoint at `ws://127.0.0.1:4200/api/agents/{id}/ws`
 - **WebChat UI** at `http://127.0.0.1:4200/`
@@ -314,6 +318,7 @@ http://127.0.0.1:4200/
 ```
 
 The embedded WebChat UI allows you to:
+
 - View all running agents
 - Chat with any agent in real-time (via WebSocket)
 - See streaming responses as they are generated

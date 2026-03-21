@@ -131,7 +131,8 @@ When `OpenFangKernel::boot_with_config()` is called (either by the daemon or in-
 12. Restore persisted agents
     - Load all agents from SQLite
     - Re-register in memory (registry, capabilities, scheduler)
-    - Set state to Running
+    - Preserve each persisted agent's stored provider/model settings
+    - Preserve each persisted agent's stored lifecycle state
 
 13. Publish KernelStarted event
 
@@ -153,6 +154,8 @@ When the daemon wraps the kernel in `Arc`, additional steps occur:
     - Publishes HealthCheckFailed events on anomalies
 
 18. Start background agent loops (continuous, periodic, proactive)
+    - Only resume restored agents whose persisted state is `Running`
+    - Skip reactive agents (they wake on incoming events/messages instead)
 ```
 
 ---
@@ -310,6 +313,7 @@ Conversation history storage. Each agent has a session containing its message hi
 ### 5. Task Board
 
 A shared task queue for multi-agent collaboration:
+
 - `task_post`: Create a task with title, description, and optional assignee.
 - `task_claim`: Claim the next available task.
 - `task_complete`: Mark a task as done with a result.
@@ -402,6 +406,7 @@ base_url = "https://custom.api.com"   # Optional custom endpoint
 ```
 
 When resolving the driver for an agent:
+
 1. If the agent uses the same provider as the kernel default (and no custom key/URL), reuse the kernel's shared driver instance.
 2. Otherwise, create a dedicated driver for that agent.
 
@@ -707,12 +712,14 @@ WireMessage {
 ```
 
 **Request types:**
+
 - `Discover` -- Request peer information and agent list
 - `Advertise` -- Announce local agents to a peer
 - `RouteMessage` -- Send a message to a remote agent
 - `Ping` -- Keepalive
 
 **Response types:**
+
 - `DiscoverResponse` -- Peer info and agent list
 - `RouteResponse` -- Agent's response to a routed message
 - `Pong` -- Keepalive response
@@ -740,6 +747,7 @@ pub struct RemoteAgent {
 ### Capability Gating
 
 OFP operations require capabilities:
+
 - `OfpDiscover` -- Required to send discover requests
 - `OfpConnect(addr)` -- Required to connect to a specific peer
 - `OfpAdvertise` -- Required to advertise agents to peers
