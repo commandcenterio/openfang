@@ -389,13 +389,26 @@ impl State {
 
     fn build_provider_order(&mut self) {
         self.provider_order.clear();
+        if let Some((ollama_idx, _)) = PROVIDERS
+            .iter()
+            .enumerate()
+            .find(|(_, p)| p.name == "ollama")
+        {
+            self.provider_order.push(ollama_idx);
+        }
         for (i, p) in PROVIDERS.iter().enumerate() {
+            if p.name == "ollama" {
+                continue;
+            }
             let detected = provider_is_detected(p);
             if detected {
                 self.provider_order.push(i);
             }
         }
         for (i, p) in PROVIDERS.iter().enumerate() {
+            if p.name == "ollama" {
+                continue;
+            }
             let detected = provider_is_detected(p);
             if !detected {
                 self.provider_order.push(i);

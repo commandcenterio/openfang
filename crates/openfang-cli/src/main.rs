@@ -1374,24 +1374,35 @@ fn launch_desktop_app(_openfang_dir: &std::path::Path) {
 
 /// Auto-detect the best available provider.
 fn detect_best_provider() -> (&'static str, &'static str, &'static str) {
-    let providers = provider_list();
-
-    for (p, env_var, m, display) in &providers {
-        if std::env::var(env_var).is_ok() {
-            ui::success(&format!("Detected {display} ({env_var})"));
-            return (p, env_var, m);
-        }
-    }
-    // Also check GOOGLE_API_KEY
-    if std::env::var("GOOGLE_API_KEY").is_ok() {
-        ui::success("Detected Gemini (GOOGLE_API_KEY)");
-        return ("gemini", "GOOGLE_API_KEY", "gemini-2.5-flash");
-    }
     // Check if Ollama is running locally (no API key needed)
     if check_ollama_available() {
         ui::success("Detected Ollama running locally (no API key needed)");
         return ("ollama", "", "llama3.2");
     }
+
+    let providers = provider_list();
+    let mut detected_cloud: Vec<String> = Vec::new();
+    for (_, env_var, _, display) in &providers {
+        if std::env::var(env_var).ok().filter(|v| !v.is_empty()).is_some() {
+            detected_cloud.push(format!("{display} ({env_var})"));
+        }
+    }
+    if std::env::var("GOOGLE_API_KEY")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .is_some()
+    {
+        detected_cloud.push("Gemini (GOOGLE_API_KEY)".to_string());
+    }
+
+    if !detected_cloud.is_empty() {
+        ui::hint(&format!(
+            "Detected cloud provider credentials: {}",
+            detected_cloud.join(", ")
+        ));
+        ui::hint("Fresh installs still default to Ollama unless you change the config later");
+    }
+
     ui::hint("No LLM provider API keys found");
     ui::hint("Defaulting to Ollama-first config for local models");
     ui::hint("Start Ollama: https://ollama.com  then run `ollama pull llama3.2`");
