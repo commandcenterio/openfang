@@ -29,7 +29,7 @@ use openfang_runtime::sandbox::{SandboxConfig, WasmSandbox};
 use openfang_runtime::tool_runner::builtin_tool_definitions;
 use openfang_types::agent::*;
 use openfang_types::capability::Capability;
-use openfang_types::config::{KernelConfig, OutputFormat};
+use openfang_types::config::{DefaultModelConfig, KernelConfig, OutputFormat};
 use openfang_types::error::OpenFangError;
 use openfang_types::event::*;
 use openfang_types::memory::Memory;
@@ -117,6 +117,14 @@ fn import_manifest_backed_agents(kernel: &OpenFangKernel) {
     if imported > 0 {
         info!("Imported {imported} manifest-backed agent(s) from disk");
     }
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedModelTarget {
+    provider: String,
+    model: String,
+    api_key_env: Option<String>,
+    base_url: Option<String>,
 }
 
 /// The main OpenFang kernel — coordinates all subsystems.
@@ -4720,20 +4728,90 @@ impl OpenFangKernel {
         None
     }
 
+    fn effective_default_model(&self) -> DefaultModelConfig {
+        self.default_model_override
+            .read()
+            .unwrap_or_else(|e: std::sync::PoisonError<_>| e.into_inner())
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| self.config.default_model.clone())
+    }
+
+    fn resolve_model_target(
+        &self,
+        provider: &str,
+        model: &str,
+        api_key_env: Option<&String>,
+        base_url: Option<&String>,
+    ) -> ResolvedModelTarget {
+        let effective_default = self.effective_default_model();
+        let provider_was_default = provider.is_empty() || provider == "default";
+        let model_was_default = model.is_empty() || model == "default";
+
+        let mut resolved = ResolvedModelTarget {
+            provider: if provider_was_default {
+                effective_default.provider.clone()
+            } else {
+                provider.to_string()
+            },
+            model: if model_was_default {
+                effective_default.model.clone()
+            } else {
+                model.to_string()
+            },
+            api_key_env: api_key_env.cloned(),
+            base_url: base_url.cloned(),
+        };
+
+        if let Ok(catalog) = self.model_catalog.read() {
+            if let Some(entry) = catalog.find_model(&resolved.model) {
+                if provider_was_default || resolved.provider == entry.provider {
+                    resolved.provider = entry.provider.clone();
+                    resolved.model = strip_provider_prefix(&entry.id, &entry.provider);
+                }
+            }
+        }
+
+        resolved.model = strip_provider_prefix(&resolved.model, &resolved.provider);
+
+        if resolved.api_key_env.is_none() && !resolved.provider.is_empty() {
+            if provider_was_default
+                && resolved.provider == effective_default.provider
+                && !effective_default.api_key_env.is_empty()
+            {
+                resolved.api_key_env = Some(effective_default.api_key_env.clone());
+            } else {
+                resolved.api_key_env = Some(self.config.resolve_api_key_env(&resolved.provider));
+            }
+        }
+
+        if resolved.base_url.is_none() {
+            if provider_was_default
+                && resolved.provider == effective_default.provider
+                && effective_default.base_url.is_some()
+            {
+                resolved.base_url = effective_default.base_url.clone();
+            } else if !resolved.provider.is_empty() {
+                resolved.base_url = self.lookup_provider_url(&resolved.provider);
+            }
+        }
+
+        resolved
+    }
+
     fn resolve_driver(&self, manifest: &AgentManifest) -> KernelResult<Arc<dyn LlmDriver>> {
-        let agent_provider = &manifest.model.provider;
+        let resolved_primary = self.resolve_model_target(
+            &manifest.model.provider,
+            &manifest.model.model,
+            manifest.model.api_key_env.as_ref(),
+            manifest.model.base_url.as_ref(),
+        );
 
         // Use the effective default model: hot-reloaded override takes priority
         // over the boot-time config. This ensures that when a user saves a new
         // API key via the dashboard and the default provider is switched,
         // resolve_driver sees the updated provider/model/api_key_env.
-        let override_guard = self
-            .default_model_override
-            .read()
-            .unwrap_or_else(|e: std::sync::PoisonError<_>| e.into_inner());
-        let effective_default = override_guard
-            .as_ref()
-            .unwrap_or(&self.config.default_model);
+        let effective_default = self.effective_default_model();
         let default_provider = &effective_default.provider;
 
         let has_custom_key = manifest.model.api_key_env.is_some();
@@ -4743,42 +4821,19 @@ impl OpenFangKernel {
         // vault → dotenv → env var chain. This ensures API keys saved at
         // runtime (via dashboard or vault) are picked up immediately.
         let primary = {
-            let api_key = if has_custom_key {
-                manifest
-                    .model
-                    .api_key_env
-                    .as_ref()
-                    .and_then(|env| self.resolve_credential(env))
-            } else if agent_provider == default_provider {
-                if !effective_default.api_key_env.is_empty() {
-                    self.resolve_credential(&effective_default.api_key_env)
-                } else {
-                    let env_var = self.config.resolve_api_key_env(agent_provider);
-                    self.resolve_credential(&env_var)
-                }
-            } else {
-                let env_var = self.config.resolve_api_key_env(agent_provider);
-                self.resolve_credential(&env_var)
-            };
+            let api_key = resolved_primary
+                .api_key_env
+                .as_ref()
+                .and_then(|env| self.resolve_credential(env));
 
             // Don't inherit default provider's base_url when switching providers.
             // Uses lookup_provider_url() which checks both boot-time config AND the
             // runtime model catalog, so custom providers added via the dashboard
             // (which only update the catalog, not self.config) are found (#494).
-            let base_url = if has_custom_url {
-                manifest.model.base_url.clone()
-            } else if agent_provider == default_provider {
-                effective_default
-                    .base_url
-                    .clone()
-                    .or_else(|| self.lookup_provider_url(agent_provider))
-            } else {
-                // Check provider_urls + catalog before falling back to hardcoded defaults
-                self.lookup_provider_url(agent_provider)
-            };
+            let base_url = resolved_primary.base_url.clone();
 
             let driver_config = DriverConfig {
-                provider: agent_provider.clone(),
+                provider: resolved_primary.provider.clone(),
                 api_key,
                 base_url,
                 skip_permissions: true,
@@ -4791,9 +4846,12 @@ impl OpenFangKernel {
                     // provider), fall back to the boot-time default driver. This
                     // keeps existing agents working while the user is still
                     // configuring providers via the dashboard.
-                    if agent_provider == default_provider && !has_custom_key && !has_custom_url {
+                    if resolved_primary.provider == *default_provider
+                        && !has_custom_key
+                        && !has_custom_url
+                    {
                         debug!(
-                            provider = %agent_provider,
+                            provider = %resolved_primary.provider,
                             error = %e,
                             "Fresh driver creation failed, falling back to boot-time default"
                         );
@@ -4815,26 +4873,26 @@ impl OpenFangKernel {
                 String,
             )> = vec![(primary.clone(), String::new())];
             for fb in &manifest.fallback_models {
-                let fb_api_key = if let Some(env) = &fb.api_key_env {
-                    std::env::var(env).ok()
-                } else {
-                    // Resolve using provider_api_keys / convention for custom providers
-                    let env_var = self.config.resolve_api_key_env(&fb.provider);
-                    std::env::var(&env_var).ok()
-                };
+                let resolved_fb = self.resolve_model_target(
+                    &fb.provider,
+                    &fb.model,
+                    fb.api_key_env.as_ref(),
+                    fb.base_url.as_ref(),
+                );
+                let fb_api_key = resolved_fb
+                    .api_key_env
+                    .as_ref()
+                    .and_then(|env| self.resolve_credential(env));
                 let config = DriverConfig {
-                    provider: fb.provider.clone(),
+                    provider: resolved_fb.provider.clone(),
                     api_key: fb_api_key,
-                    base_url: fb
-                        .base_url
-                        .clone()
-                        .or_else(|| self.lookup_provider_url(&fb.provider)),
+                    base_url: resolved_fb.base_url.clone(),
                     skip_permissions: true,
                 };
                 match drivers::create_driver(&config) {
-                    Ok(d) => chain.push((d, strip_provider_prefix(&fb.model, &fb.provider))),
+                    Ok(d) => chain.push((d, resolved_fb.model.clone())),
                     Err(e) => {
-                        warn!("Fallback driver '{}' failed to init: {e}", fb.provider);
+                        warn!("Fallback driver '{}' failed to init: {e}", resolved_fb.provider);
                     }
                 }
             }
@@ -6823,6 +6881,83 @@ mod tests {
         let persisted = kernel.memory.load_all_agents().unwrap();
         assert_eq!(persisted.len(), 1);
         assert_eq!(persisted[0].name, "restored-agent");
+
+        kernel.shutdown();
+    }
+
+    #[test]
+    fn test_resolve_model_target_replaces_default_primary_model_values() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home_dir = tmp.path().join("openfang-kernel-default-model-resolution-test");
+        std::fs::create_dir_all(&home_dir).unwrap();
+
+        let config = KernelConfig {
+            home_dir: home_dir.clone(),
+            data_dir: home_dir.join("data"),
+            default_model: DefaultModelConfig {
+                provider: "groq".to_string(),
+                model: "llama-3.3-70b-versatile".to_string(),
+                api_key_env: "GROQ_API_KEY".to_string(),
+                base_url: Some("https://api.groq.com/openai/v1".to_string()),
+            },
+            ..KernelConfig::default()
+        };
+
+        let kernel = OpenFangKernel::boot_with_config(config).expect("Kernel should boot");
+        let resolved = kernel.resolve_model_target("default", "default", None, None);
+
+        assert_eq!(resolved.provider, "groq");
+        assert_eq!(resolved.model, "llama-3.3-70b-versatile");
+        assert_eq!(resolved.api_key_env.as_deref(), Some("GROQ_API_KEY"));
+        assert_eq!(
+            resolved.base_url.as_deref(),
+            Some("https://api.groq.com/openai/v1")
+        );
+
+        kernel.shutdown();
+    }
+
+    #[test]
+    fn test_resolve_model_target_replaces_default_fallback_values() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home_dir = tmp
+            .path()
+            .join("openfang-kernel-fallback-model-resolution-test");
+        std::fs::create_dir_all(&home_dir).unwrap();
+
+        let config = KernelConfig {
+            home_dir: home_dir.clone(),
+            data_dir: home_dir.join("data"),
+            default_model: DefaultModelConfig {
+                provider: "groq".to_string(),
+                model: "llama-3.3-70b-versatile".to_string(),
+                api_key_env: "GROQ_API_KEY".to_string(),
+                base_url: Some("https://api.groq.com/openai/v1".to_string()),
+            },
+            ..KernelConfig::default()
+        };
+
+        let kernel = OpenFangKernel::boot_with_config(config).expect("Kernel should boot");
+        let fallback = FallbackModel {
+            provider: "default".to_string(),
+            model: "default".to_string(),
+            api_key_env: None,
+            base_url: None,
+        };
+        let resolved = kernel.resolve_model_target(
+            &fallback.provider,
+            &fallback.model,
+            fallback.api_key_env.as_ref(),
+            fallback.base_url.as_ref(),
+        );
+
+        assert_eq!(resolved.provider, "groq");
+        assert_eq!(resolved.model, "llama-3.3-70b-versatile");
+        assert_eq!(resolved.api_key_env.as_deref(), Some("GROQ_API_KEY"));
+        assert_eq!(
+            resolved.base_url.as_deref(),
+            Some("https://api.groq.com/openai/v1")
+        );
 
         kernel.shutdown();
     }
