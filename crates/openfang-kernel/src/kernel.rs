@@ -1,12 +1,19 @@
 //! OpenFangKernel — assembles all subsystems and provides the main API.
 
+use crate::agent_defaults::build_default_assistant_manifest;
 use crate::auth::AuthManager;
 use crate::background::{self, BackgroundExecutor};
+use crate::background_policy::collect_background_agents;
 use crate::capabilities::CapabilityManager;
 use crate::config::load_config;
 use crate::error::{KernelError, KernelResult};
 use crate::event_bus::EventBus;
 use crate::metering::MeteringEngine;
+use crate::model_resolution::{
+    apply_spawn_model_defaults, default_embedding_model_for_provider,
+    infer_provider_from_model, resolve_model_target as resolve_model_target_helper,
+    ResolvedModelTarget,
+};
 use crate::registry::AgentRegistry;
 use crate::scheduler::AgentScheduler;
 use crate::supervisor::Supervisor;
@@ -117,14 +124,6 @@ fn import_manifest_backed_agents(kernel: &OpenFangKernel) {
     if imported > 0 {
         info!("Imported {imported} manifest-backed agent(s) from disk");
     }
-}
-
-#[derive(Debug, Clone)]
-struct ResolvedModelTarget {
-    provider: String,
-    model: String,
-    api_key_env: Option<String>,
-    base_url: Option<String>,
 }
 
 /// The main OpenFang kernel — coordinates all subsystems.
@@ -1257,24 +1256,7 @@ impl OpenFangKernel {
         // If no agents exist (fresh install), spawn a default assistant
         if kernel.registry.list().is_empty() {
             info!("No agents found — spawning default assistant");
-            let dm = &kernel.config.default_model;
-            let manifest = AgentManifest {
-                name: "assistant".to_string(),
-                description: "General-purpose assistant".to_string(),
-                model: openfang_types::agent::ModelConfig {
-                    provider: dm.provider.clone(),
-                    model: dm.model.clone(),
-                    system_prompt: "You are a helpful AI assistant.".to_string(),
-                    api_key_env: if dm.api_key_env.is_empty() {
-                        None
-                    } else {
-                        Some(dm.api_key_env.clone())
-                    },
-                    base_url: dm.base_url.clone(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            };
+            let manifest = build_default_assistant_manifest(&kernel.config.default_model);
             match kernel.spawn_agent(manifest) {
                 Ok(id) => info!(id = %id, "Default assistant spawned"),
                 Err(e) => warn!("Failed to spawn default assistant: {e}"),
@@ -1333,69 +1315,14 @@ impl OpenFangKernel {
         }
         info!(agent = %name, id = %agent_id, exec_mode = ?manifest.exec_policy.as_ref().map(|p| &p.mode), "Agent exec_policy resolved");
 
-        // Overlay kernel default_model onto agent if agent didn't explicitly choose.
-        // Treat empty or "default" as "use the kernel's configured default_model".
-        // This allows bundled agents to defer to the user's configured provider/model,
-        // even if the agent manifest specifies an api_key_env (which is just a hint
-        // about which env var to check, not a hard lock on provider/model).
-        {
-            let is_default_provider =
-                manifest.model.provider.is_empty() || manifest.model.provider == "default";
-            let is_default_model =
-                manifest.model.model.is_empty() || manifest.model.model == "default";
-            if is_default_provider && is_default_model {
-                // Check hot-reloaded override first, fall back to boot-time config
-                let override_guard = self
-                    .default_model_override
-                    .read()
-                    .unwrap_or_else(|e: std::sync::PoisonError<_>| e.into_inner());
-                let dm = override_guard
-                    .as_ref()
-                    .unwrap_or(&self.config.default_model);
-                if !dm.provider.is_empty() {
-                    manifest.model.provider = dm.provider.clone();
-                }
-                if !dm.model.is_empty() {
-                    manifest.model.model = dm.model.clone();
-                }
-                if !dm.api_key_env.is_empty() && manifest.model.api_key_env.is_none() {
-                    manifest.model.api_key_env = Some(dm.api_key_env.clone());
-                }
-                if dm.base_url.is_some() && manifest.model.base_url.is_none() {
-                    manifest.model.base_url.clone_from(&dm.base_url);
-                }
-            }
-        }
-
-        // Normalize catalog-backed model labels/aliases into canonical IDs and
-        // fill provider/auth hints when the manifest did not fully specify them.
-        if let Ok(catalog) = self.model_catalog.read() {
-            if let Some(entry) = catalog.find_model(&manifest.model.model) {
-                let provider_is_default =
-                    manifest.model.provider.is_empty() || manifest.model.provider == "default";
-                if provider_is_default || manifest.model.provider == entry.provider {
-                    manifest.model.provider = entry.provider.clone();
-                    manifest.model.model = strip_provider_prefix(&entry.id, &entry.provider);
-                    if manifest.model.api_key_env.is_none() {
-                        manifest.model.api_key_env =
-                            Some(self.config.resolve_api_key_env(&entry.provider));
-                    }
-                }
-            }
-        }
-        if manifest.model.api_key_env.is_none()
-            && !manifest.model.provider.is_empty()
-            && manifest.model.provider != "default"
-        {
-            manifest.model.api_key_env =
-                Some(self.config.resolve_api_key_env(&manifest.model.provider));
-        }
-
-        // Normalize: strip provider prefix from model name if present
-        let normalized = strip_provider_prefix(&manifest.model.model, &manifest.model.provider);
-        if normalized != manifest.model.model {
-            manifest.model.model = normalized;
-        }
+        let effective_default = self.effective_default_model();
+        let catalog = self.model_catalog.read().ok();
+        apply_spawn_model_defaults(
+            &mut manifest,
+            &effective_default,
+            catalog.as_deref(),
+            |provider| self.config.resolve_api_key_env(provider),
+        );
 
         // Apply global budget defaults to agent resource quotas
         apply_budget_defaults(&self.config.budget, &mut manifest.resources);
@@ -3906,21 +3833,7 @@ impl OpenFangKernel {
         }
 
         let agents = self.registry.list();
-        let mut bg_agents: Vec<(openfang_types::agent::AgentId, String, ScheduleMode)> = Vec::new();
-
-        for entry in &agents {
-            if entry.state != AgentState::Running {
-                continue;
-            }
-            if matches!(entry.manifest.schedule, ScheduleMode::Reactive) {
-                continue;
-            }
-            bg_agents.push((
-                entry.id,
-                entry.name.clone(),
-                entry.manifest.schedule.clone(),
-            ));
-        }
+        let bg_agents = collect_background_agents(&agents);
 
         if !bg_agents.is_empty() {
             let count = bg_agents.len();
@@ -4715,58 +4628,17 @@ impl OpenFangKernel {
         base_url: Option<&String>,
     ) -> ResolvedModelTarget {
         let effective_default = self.effective_default_model();
-        let provider_was_default = provider.is_empty() || provider == "default";
-        let model_was_default = model.is_empty() || model == "default";
-
-        let mut resolved = ResolvedModelTarget {
-            provider: if provider_was_default {
-                effective_default.provider.clone()
-            } else {
-                provider.to_string()
-            },
-            model: if model_was_default {
-                effective_default.model.clone()
-            } else {
-                model.to_string()
-            },
-            api_key_env: api_key_env.cloned(),
-            base_url: base_url.cloned(),
-        };
-
-        if let Ok(catalog) = self.model_catalog.read() {
-            if let Some(entry) = catalog.find_model(&resolved.model) {
-                if provider_was_default || resolved.provider == entry.provider {
-                    resolved.provider = entry.provider.clone();
-                    resolved.model = strip_provider_prefix(&entry.id, &entry.provider);
-                }
-            }
-        }
-
-        resolved.model = strip_provider_prefix(&resolved.model, &resolved.provider);
-
-        if resolved.api_key_env.is_none() && !resolved.provider.is_empty() {
-            if provider_was_default
-                && resolved.provider == effective_default.provider
-                && !effective_default.api_key_env.is_empty()
-            {
-                resolved.api_key_env = Some(effective_default.api_key_env.clone());
-            } else {
-                resolved.api_key_env = Some(self.config.resolve_api_key_env(&resolved.provider));
-            }
-        }
-
-        if resolved.base_url.is_none() {
-            if provider_was_default
-                && resolved.provider == effective_default.provider
-                && effective_default.base_url.is_some()
-            {
-                resolved.base_url = effective_default.base_url.clone();
-            } else if !resolved.provider.is_empty() {
-                resolved.base_url = self.lookup_provider_url(&resolved.provider);
-            }
-        }
-
-        resolved
+        let catalog = self.model_catalog.read().ok();
+        resolve_model_target_helper(
+            &effective_default,
+            provider,
+            model,
+            api_key_env,
+            base_url,
+            catalog.as_deref(),
+            |resolved_provider| self.lookup_provider_url(resolved_provider),
+            |resolved_provider| self.config.resolve_api_key_env(resolved_provider),
+        )
     }
 
     fn resolve_driver(&self, manifest: &AgentManifest) -> KernelResult<Arc<dyn LlmDriver>> {
@@ -5634,105 +5506,6 @@ fn apply_budget_defaults(
     // via config.toml [budget] default_max_llm_tokens_per_hour = 10000000
     if budget.default_max_llm_tokens_per_hour > 0 {
         resources.max_llm_tokens_per_hour = budget.default_max_llm_tokens_per_hour;
-    }
-}
-
-/// Pick a sensible default embedding model for a given provider when the user
-/// configured an explicit `embedding_provider` but left `embedding_model` at the
-/// default value (which is a local model name that cloud APIs wouldn't recognise).
-fn default_embedding_model_for_provider(provider: &str) -> &'static str {
-    match provider {
-        "openai" => "text-embedding-3-small",
-        "mistral" => "mistral-embed",
-        "cohere" => "embed-english-v3.0",
-        // Local providers use nomic-embed-text as a good default
-        "ollama" | "vllm" | "lmstudio" => "nomic-embed-text",
-        // Other OpenAI-compatible APIs typically support the OpenAI model names
-        _ => "text-embedding-3-small",
-    }
-}
-
-/// Infer provider from a model name when catalog lookup fails.
-///
-/// Uses well-known model name prefixes to map to the correct provider.
-/// This is a defense-in-depth fallback — models should ideally be in the catalog.
-fn infer_provider_from_model(model: &str) -> Option<String> {
-    let lower = model.to_lowercase();
-    // Check for explicit provider prefix with / or : delimiter
-    // (e.g., "minimax/MiniMax-M2.5" or "qwen:qwen-plus")
-    let (prefix, has_delim) = if let Some(idx) = lower.find('/') {
-        (&lower[..idx], true)
-    } else if let Some(idx) = lower.find(':') {
-        (&lower[..idx], true)
-    } else {
-        (lower.as_str(), false)
-    };
-    if has_delim {
-        // Two or more slashes (e.g. "mlx-lm-lg/mlx-community/Qwen3-4B") means
-        // the first segment is explicitly a provider prefix — HuggingFace repo
-        // IDs only have one slash, so extra slashes are unambiguous.
-        if lower.chars().filter(|&c| c == '/').count() >= 2 {
-            return Some(prefix.to_string());
-        }
-        match prefix {
-            "minimax" | "gemini" | "anthropic" | "openai" | "groq" | "deepseek" | "mistral"
-            | "cohere" | "xai" | "ollama" | "together" | "fireworks" | "perplexity"
-            | "cerebras" | "sambanova" | "replicate" | "huggingface" | "ai21" | "codex"
-            | "claude-code" | "copilot" | "github-copilot" | "qwen" | "zhipu" | "zai"
-            | "moonshot" | "openrouter" | "volcengine" | "doubao" | "dashscope" => {
-                return Some(prefix.to_string());
-            }
-            // "kimi" is a brand alias for moonshot
-            "kimi" => {
-                return Some("moonshot".to_string());
-            }
-            _ => {}
-        }
-    }
-    // Infer from well-known model name patterns
-    if lower.starts_with("minimax") {
-        Some("minimax".to_string())
-    } else if lower.starts_with("gemini") {
-        Some("gemini".to_string())
-    } else if lower.starts_with("claude") {
-        Some("anthropic".to_string())
-    } else if lower.starts_with("gpt")
-        || lower.starts_with("o1")
-        || lower.starts_with("o3")
-        || lower.starts_with("o4")
-    {
-        Some("openai".to_string())
-    } else if lower.starts_with("llama")
-        || lower.starts_with("mixtral")
-        || lower.starts_with("qwen")
-    {
-        // These could be on multiple providers; don't infer
-        None
-    } else if lower.starts_with("grok") {
-        Some("xai".to_string())
-    } else if lower.starts_with("deepseek") {
-        Some("deepseek".to_string())
-    } else if lower.starts_with("mistral")
-        || lower.starts_with("codestral")
-        || lower.starts_with("pixtral")
-    {
-        Some("mistral".to_string())
-    } else if lower.starts_with("command") || lower.starts_with("embed-") {
-        Some("cohere".to_string())
-    } else if lower.starts_with("jamba") {
-        Some("ai21".to_string())
-    } else if lower.starts_with("sonar") {
-        Some("perplexity".to_string())
-    } else if lower.starts_with("glm") {
-        Some("zhipu".to_string())
-    } else if lower.starts_with("ernie") {
-        Some("qianfan".to_string())
-    } else if lower.starts_with("abab") {
-        Some("minimax".to_string())
-    } else if lower.starts_with("moonshot") || lower.starts_with("kimi") {
-        Some("moonshot".to_string())
-    } else {
-        None
     }
 }
 

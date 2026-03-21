@@ -4,9 +4,11 @@
 //! and inter-agent communication.
 
 pub mod approval;
+pub mod agent_defaults;
 pub mod auth;
 pub mod auto_reply;
 pub mod background;
+pub mod background_policy;
 pub mod capabilities;
 pub mod config;
 pub mod config_reload;
@@ -16,6 +18,7 @@ pub mod event_bus;
 pub mod heartbeat;
 pub mod kernel;
 pub mod metering;
+pub mod model_resolution;
 pub mod pairing;
 pub mod registry;
 pub mod scheduler;
