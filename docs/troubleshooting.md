@@ -236,6 +236,8 @@ curl http://127.0.0.1:4200/api/models/aliases
 **Fix**: Ensure the local server is running:
 
 ```bash
+openfang doctor
+
 # Ollama
 ollama serve  # Default: http://localhost:11434
 
@@ -245,6 +247,13 @@ python -m vllm.entrypoints.openai.api_server --model ...
 # LM Studio
 # Start from the LM Studio UI, enable API server
 ```
+
+`openfang doctor` now includes a local Ollama preflight that tells you whether:
+
+- the configured Ollama base URL is reachable,
+- the effective default model resolves correctly,
+- the default Ollama model is installed, and
+- the local embedding model such as `nomic-embed-text` is present when semantic recall would use it.
 
 ---
 

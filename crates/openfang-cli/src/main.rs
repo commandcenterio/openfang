@@ -18,6 +18,7 @@ use colored::Colorize;
 use openfang_api::server::read_daemon_info;
 use openfang_kernel::OpenFangKernel;
 use openfang_types::agent::{AgentId, AgentManifest};
+use openfang_types::config::{DefaultModelConfig, KernelConfig};
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
@@ -1440,6 +1441,221 @@ fn check_ollama_available() -> bool {
     .is_ok()
 }
 
+#[derive(Debug, Clone)]
+struct OllamaProbeSummary {
+    reachable: bool,
+    latency_ms: u64,
+    discovered_models: Vec<String>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct EffectiveEmbeddingTarget {
+    provider: String,
+    model: String,
+}
+
+fn effective_default_model_for_doctor(config: &KernelConfig) -> DefaultModelConfig {
+    let mut effective = config.default_model.clone();
+    let fallback = DefaultModelConfig::default();
+
+    if let Ok(provider) = std::env::var("OPENFANG_DEFAULT_PROVIDER") {
+        let provider = provider.trim();
+        if !provider.is_empty() {
+            effective.provider = provider.to_string();
+        }
+    }
+
+    if let Ok(model) = std::env::var("OPENFANG_DEFAULT_MODEL") {
+        let model = model.trim();
+        if !model.is_empty() {
+            effective.model = model.to_string();
+        }
+    }
+
+    if effective.provider.trim().is_empty() || effective.provider == "default" {
+        effective.provider = fallback.provider;
+    }
+
+    if effective.model.trim().is_empty() || effective.model == "default" {
+        effective.model = fallback.model;
+    }
+
+    effective
+}
+
+fn normalize_model_name(provider: &str, model: &str) -> String {
+    let trimmed = model.trim();
+    if provider.eq_ignore_ascii_case("ollama") {
+        trimmed
+            .strip_prefix("ollama/")
+            .or_else(|| trimmed.strip_prefix("ollama:"))
+            .unwrap_or(trimmed)
+            .to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn effective_embedding_target_for_doctor(config: &KernelConfig) -> EffectiveEmbeddingTarget {
+    let configured_model = config.memory.embedding_model.trim();
+
+    if let Some(provider) = config
+        .memory
+        .embedding_provider
+        .as_deref()
+        .map(str::trim)
+        .filter(|provider| !provider.is_empty())
+    {
+        let model = if configured_model == "all-MiniLM-L6-v2" {
+            match provider {
+                "openai" => "text-embedding-3-small",
+                "mistral" => "mistral-embed",
+                "cohere" => "embed-english-v3.0",
+                "ollama" | "vllm" | "lmstudio" => "nomic-embed-text",
+                _ => "text-embedding-3-small",
+            }
+        } else {
+            configured_model
+        };
+
+        return EffectiveEmbeddingTarget {
+            provider: provider.to_string(),
+            model: normalize_model_name(provider, model),
+        };
+    }
+
+    if std::env::var("OPENAI_API_KEY")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .is_some()
+    {
+        let model = if configured_model == "all-MiniLM-L6-v2" {
+            "text-embedding-3-small"
+        } else {
+            configured_model
+        };
+        return EffectiveEmbeddingTarget {
+            provider: "openai".to_string(),
+            model: normalize_model_name("openai", model),
+        };
+    }
+
+    let model = if configured_model == "all-MiniLM-L6-v2" {
+        "nomic-embed-text"
+    } else {
+        configured_model
+    };
+    EffectiveEmbeddingTarget {
+        provider: "ollama".to_string(),
+        model: normalize_model_name("ollama", model),
+    }
+}
+
+fn ollama_base_url_for_doctor(
+    config: &KernelConfig,
+    effective_default: &DefaultModelConfig,
+) -> String {
+    config
+        .provider_urls
+        .get("ollama")
+        .cloned()
+        .or_else(|| {
+            if effective_default.provider == "ollama" {
+                effective_default.base_url.clone()
+            } else {
+                None
+            }
+        })
+        .unwrap_or_else(|| openfang_types::model_catalog::OLLAMA_BASE_URL.to_string())
+}
+
+fn ollama_tags_url(base_url: &str) -> String {
+    let root = base_url
+        .trim_end_matches('/')
+        .trim_end_matches("/v1")
+        .trim_end_matches("/v1/");
+    format!("{root}/api/tags")
+}
+
+fn probe_ollama_models(base_url: &str) -> OllamaProbeSummary {
+    let start = std::time::Instant::now();
+    let client = match reqwest::blocking::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(1))
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+    {
+        Ok(client) => client,
+        Err(error) => {
+            return OllamaProbeSummary {
+                reachable: false,
+                latency_ms: 0,
+                discovered_models: Vec::new(),
+                error: Some(format!("Failed to build HTTP client: {error}")),
+            };
+        }
+    };
+
+    let response = match client.get(ollama_tags_url(base_url)).send() {
+        Ok(response) => response,
+        Err(error) => {
+            return OllamaProbeSummary {
+                reachable: false,
+                latency_ms: start.elapsed().as_millis() as u64,
+                discovered_models: Vec::new(),
+                error: Some(error.to_string()),
+            };
+        }
+    };
+
+    if !response.status().is_success() {
+        return OllamaProbeSummary {
+            reachable: false,
+            latency_ms: start.elapsed().as_millis() as u64,
+            discovered_models: Vec::new(),
+            error: Some(format!("HTTP {}", response.status())),
+        };
+    }
+
+    let payload: serde_json::Value = match response.json() {
+        Ok(payload) => payload,
+        Err(error) => {
+            return OllamaProbeSummary {
+                reachable: true,
+                latency_ms: start.elapsed().as_millis() as u64,
+                discovered_models: Vec::new(),
+                error: Some(format!("Invalid JSON: {error}")),
+            };
+        }
+    };
+
+    let models = payload
+        .get("models")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("name").and_then(|value| value.as_str()))
+                .map(|name| name.to_string())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    OllamaProbeSummary {
+        reachable: true,
+        latency_ms: start.elapsed().as_millis() as u64,
+        discovered_models: models,
+        error: None,
+    }
+}
+
+fn installed_in_ollama(probe: &OllamaProbeSummary, model: &str) -> bool {
+    let normalized = normalize_model_name("ollama", model);
+    probe.discovered_models.iter().any(|installed| {
+        installed == &normalized || installed == &format!("{normalized}:latest")
+    })
+}
+
 /// Write config.toml if it doesn't already exist.
 fn write_config_if_missing(
     openfang_dir: &std::path::Path,
@@ -2463,7 +2679,200 @@ decay_rate = 0.05
         all_ok = false;
     }
 
-    // --- Check 10: Channel token format validation ---
+    // --- Check 10: Local-first Ollama preflight ---
+    {
+        let openfang_dir = cli_openfang_home();
+        let config_path = openfang_dir.join("config.toml");
+        if !json {
+            println!("\n  Local Ollama Preflight:");
+        }
+        if config_path.exists() {
+            match std::fs::read_to_string(&config_path)
+                .ok()
+                .and_then(|text| toml::from_str::<KernelConfig>(&text).ok())
+            {
+                Some(config) => {
+                    let effective_default = effective_default_model_for_doctor(&config);
+                    let effective_default_provider = effective_default.provider.clone();
+                    let effective_default_model =
+                        normalize_model_name(&effective_default_provider, &effective_default.model);
+                    let effective_embedding = effective_embedding_target_for_doctor(&config);
+                    let ollama_base_url = ollama_base_url_for_doctor(&config, &effective_default);
+
+                    if !json {
+                        ui::check_ok(&format!(
+                            "Effective default model resolves to {}/{}",
+                            effective_default_provider, effective_default_model
+                        ));
+                    }
+                    checks.push(serde_json::json!({
+                        "check": "ollama_effective_default",
+                        "status": "ok",
+                        "provider": effective_default_provider,
+                        "model": effective_default_model,
+                    }));
+
+                    let probe = probe_ollama_models(&ollama_base_url);
+                    if probe.reachable {
+                        if !json {
+                            ui::check_ok(&format!(
+                                "Ollama reachable at {} ({} ms)",
+                                ollama_base_url, probe.latency_ms
+                            ));
+                        }
+                        checks.push(serde_json::json!({
+                            "check": "ollama_reachable",
+                            "status": "ok",
+                            "base_url": ollama_base_url,
+                            "latency_ms": probe.latency_ms,
+                            "installed_models": probe.discovered_models,
+                        }));
+
+                        if effective_default.provider == "ollama" {
+                            if installed_in_ollama(&probe, &effective_default.model) {
+                                if !json {
+                                    ui::check_ok(&format!(
+                                        "Default Ollama model installed: {}",
+                                        effective_default_model
+                                    ));
+                                }
+                                checks.push(serde_json::json!({
+                                    "check": "ollama_default_model_installed",
+                                    "status": "ok",
+                                    "model": effective_default_model,
+                                }));
+                            } else {
+                                if !json {
+                                    ui::check_fail(&format!(
+                                        "Default Ollama model missing: {}",
+                                        effective_default_model
+                                    ));
+                                    ui::hint(&format!(
+                                        "Install it with: ollama pull {}",
+                                        effective_default_model
+                                    ));
+                                }
+                                checks.push(serde_json::json!({
+                                    "check": "ollama_default_model_installed",
+                                    "status": "fail",
+                                    "model": effective_default_model,
+                                }));
+                                all_ok = false;
+                            }
+                        } else {
+                            if !json {
+                                ui::check_warn(&format!(
+                                    "Effective default provider is {} — Ollama default-model install check skipped",
+                                    effective_default.provider
+                                ));
+                            }
+                            checks.push(serde_json::json!({
+                                "check": "ollama_default_model_installed",
+                                "status": "warn",
+                                "provider": effective_default.provider,
+                                "reason": "effective default provider is not ollama",
+                            }));
+                        }
+
+                        if effective_embedding.provider == "ollama" {
+                            if installed_in_ollama(&probe, &effective_embedding.model) {
+                                if !json {
+                                    ui::check_ok(&format!(
+                                        "Semantic recall embedding model installed: {}",
+                                        effective_embedding.model
+                                    ));
+                                }
+                                checks.push(serde_json::json!({
+                                    "check": "ollama_embedding_model_installed",
+                                    "status": "ok",
+                                    "model": effective_embedding.model,
+                                }));
+                            } else {
+                                if !json {
+                                    ui::check_warn(&format!(
+                                        "Semantic recall embedding model missing: {}",
+                                        effective_embedding.model
+                                    ));
+                                    ui::hint(&format!(
+                                        "Install it with: ollama pull {}",
+                                        effective_embedding.model
+                                    ));
+                                }
+                                checks.push(serde_json::json!({
+                                    "check": "ollama_embedding_model_installed",
+                                    "status": "warn",
+                                    "model": effective_embedding.model,
+                                }));
+                            }
+                        } else {
+                            if !json {
+                                ui::check_ok(&format!(
+                                    "Embedding provider resolves to {}/{} — no local Ollama embedding model required",
+                                    effective_embedding.provider, effective_embedding.model
+                                ));
+                            }
+                            checks.push(serde_json::json!({
+                                "check": "ollama_embedding_model_installed",
+                                "status": "ok",
+                                "provider": effective_embedding.provider,
+                                "model": effective_embedding.model,
+                                "reason": "embedding does not use ollama",
+                            }));
+                        }
+                    } else {
+                        let severity_is_fail = effective_default.provider == "ollama"
+                            || effective_embedding.provider == "ollama";
+                        if !json {
+                            if severity_is_fail {
+                                ui::check_fail(&format!(
+                                    "Ollama not reachable at {}",
+                                    ollama_base_url
+                                ));
+                            } else {
+                                ui::check_warn(&format!(
+                                    "Ollama not reachable at {}",
+                                    ollama_base_url
+                                ));
+                            }
+                            ui::hint("Start Ollama with: ollama serve");
+                        }
+                        checks.push(serde_json::json!({
+                            "check": "ollama_reachable",
+                            "status": if severity_is_fail { "fail" } else { "warn" },
+                            "base_url": ollama_base_url,
+                            "error": probe.error,
+                        }));
+                        if severity_is_fail {
+                            all_ok = false;
+                        }
+                    }
+                }
+                None => {
+                    if !json {
+                        ui::check_warn(
+                            "Skipped Ollama preflight because config.toml could not be parsed",
+                        );
+                    }
+                    checks.push(serde_json::json!({
+                        "check": "ollama_preflight",
+                        "status": "warn",
+                        "reason": "config parse failed",
+                    }));
+                }
+            }
+        } else {
+            if !json {
+                ui::check_warn("Skipped Ollama preflight because config.toml is missing");
+            }
+            checks.push(serde_json::json!({
+                "check": "ollama_preflight",
+                "status": "warn",
+                "reason": "config missing",
+            }));
+        }
+    }
+
+    // --- Check 11: Channel token format validation ---
     if !json {
         println!("\n  Channel Integrations:");
     }
@@ -2501,7 +2910,7 @@ decay_rate = 0.05
         }
     }
 
-    // --- Check 11: .env keys vs config api_key_env consistency ---
+    // --- Check 12: .env keys vs config api_key_env consistency ---
     {
         let openfang_dir = cli_openfang_home();
         let config_path = openfang_dir.join("config.toml");
@@ -2527,7 +2936,7 @@ decay_rate = 0.05
         }
     }
 
-    // --- Check 12: Config deserialization into KernelConfig ---
+    // --- Check 13: Config deserialization into KernelConfig ---
     {
         let openfang_dir = cli_openfang_home();
         let config_path = openfang_dir.join("config.toml");
@@ -2628,7 +3037,7 @@ decay_rate = 0.05
         }
     }
 
-    // --- Check 13: Skill registry health ---
+    // --- Check 14: Skill registry health ---
     {
         if !json {
             println!("\n  Skills:");
@@ -2701,7 +3110,7 @@ decay_rate = 0.05
         }
     }
 
-    // --- Check 14: Extension registry health ---
+    // --- Check 15: Extension registry health ---
     {
         if !json {
             println!("\n  Extensions:");
@@ -2723,7 +3132,7 @@ decay_rate = 0.05
         checks.push(serde_json::json!({"check": "extensions_installed", "status": "ok", "count": installed_count}));
     }
 
-    // --- Check 15: Daemon health detail (if running) ---
+    // --- Check 16: Daemon health detail (if running) ---
     if let Some(ref base) = find_daemon() {
         if !json {
             println!("\n  Daemon Health:");
@@ -6706,8 +7115,84 @@ fn remove_self_binary(exe_path: &std::path::Path) {
 
 #[cfg(test)]
 mod tests {
+    use super::{
+        effective_default_model_for_doctor, effective_embedding_target_for_doctor,
+        installed_in_ollama, normalize_model_name, ollama_base_url_for_doctor, ollama_tags_url,
+        OllamaProbeSummary,
+    };
+    use openfang_types::config::KernelConfig;
 
     // --- Doctor command unit tests ---
+
+    #[test]
+    fn test_doctor_effective_default_model_applies_env_overrides() {
+        std::env::set_var("OPENFANG_DEFAULT_PROVIDER", "ollama");
+        std::env::set_var("OPENFANG_DEFAULT_MODEL", "qwen3.5:2b");
+
+        let mut config = KernelConfig::default();
+        config.default_model.provider = "openai".to_string();
+        config.default_model.model = "gpt-4o".to_string();
+
+        let effective = effective_default_model_for_doctor(&config);
+        assert_eq!(effective.provider, "ollama");
+        assert_eq!(effective.model, "qwen3.5:2b");
+
+        std::env::remove_var("OPENFANG_DEFAULT_PROVIDER");
+        std::env::remove_var("OPENFANG_DEFAULT_MODEL");
+    }
+
+    #[test]
+    fn test_doctor_effective_embedding_target_defaults_to_local_ollama_nomic() {
+        std::env::remove_var("OPENAI_API_KEY");
+
+        let config = KernelConfig::default();
+        let target = effective_embedding_target_for_doctor(&config);
+
+        assert_eq!(target.provider, "ollama");
+        assert_eq!(target.model, "nomic-embed-text");
+    }
+
+    #[test]
+    fn test_doctor_ollama_base_url_prefers_provider_override() {
+        let mut config = KernelConfig::default();
+        config.provider_urls.insert(
+            "ollama".to_string(),
+            "http://127.0.0.1:22434/v1".to_string(),
+        );
+
+        let effective = effective_default_model_for_doctor(&config);
+        assert_eq!(
+            ollama_base_url_for_doctor(&config, &effective),
+            "http://127.0.0.1:22434/v1"
+        );
+    }
+
+    #[test]
+    fn test_doctor_normalizes_ollama_model_names() {
+        assert_eq!(normalize_model_name("ollama", "ollama/qwen3.5:2b"), "qwen3.5:2b");
+        assert_eq!(normalize_model_name("ollama", "ollama:qwen3.5:2b"), "qwen3.5:2b");
+        assert_eq!(normalize_model_name("openai", "gpt-4o"), "gpt-4o");
+    }
+
+    #[test]
+    fn test_doctor_tags_url_strips_v1_suffix() {
+        assert_eq!(
+            ollama_tags_url("http://localhost:11434/v1"),
+            "http://localhost:11434/api/tags"
+        );
+    }
+
+    #[test]
+    fn test_doctor_installed_in_ollama_accepts_latest_suffix() {
+        let probe = OllamaProbeSummary {
+            reachable: true,
+            latency_ms: 1,
+            discovered_models: vec!["nomic-embed-text:latest".to_string()],
+            error: None,
+        };
+
+        assert!(installed_in_ollama(&probe, "nomic-embed-text"));
+    }
 
     #[test]
     fn test_doctor_skill_registry_loads_bundled() {

@@ -211,9 +211,10 @@ openfang doctor [--json] [--repair]
 8. **Disk space** -- warns if less than 100MB available (Unix only)
 9. **Agent manifests** -- validates all `.toml` files in `~/.openfang/agents/`
 10. **LLM provider keys** -- checks env vars for 10 providers (Groq, OpenRouter, Anthropic, OpenAI, DeepSeek, Gemini, Google, Together, Mistral, Fireworks), performs live validation (401/403 detection)
-11. **Channel tokens** -- format validation for Telegram, Discord, Slack tokens
-12. **Config consistency** -- checks that `api_key_env` references in config match actual environment variables
-13. **Rust toolchain** -- `rustc --version`
+11. **Local Ollama preflight** -- resolves the effective default provider/model, probes the configured Ollama base URL, checks whether the effective default model is installed, and warns when the local embedding model (for example `nomic-embed-text`) is missing
+12. **Channel tokens** -- format validation for Telegram, Discord, Slack tokens
+13. **Config consistency** -- checks that `api_key_env` references in config match actual environment variables
+14. **Rust toolchain** -- `rustc --version`
 
 **Example:**
 
