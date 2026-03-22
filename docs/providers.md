@@ -56,11 +56,13 @@ For Gemini specifically, either `GEMINI_API_KEY` or `GOOGLE_API_KEY` will work.
 | **Models** | 3 |
 
 **Available Models:**
+
 - `claude-opus-4-20250514` (Frontier)
 - `claude-sonnet-4-20250514` (Smart)
 - `claude-haiku-4-5-20251001` (Fast)
 
 **Setup:**
+
 1. Sign up at [console.anthropic.com](https://console.anthropic.com)
 2. Create an API key under Settings > API Keys
 3. `export ANTHROPIC_API_KEY="sk-ant-..."`
@@ -81,6 +83,7 @@ For Gemini specifically, either `GEMINI_API_KEY` or `GOOGLE_API_KEY` will work.
 | **Models** | 6 |
 
 **Available Models:**
+
 - `gpt-4.1` (Frontier)
 - `gpt-4o` (Smart)
 - `o3-mini` (Smart)
@@ -89,6 +92,7 @@ For Gemini specifically, either `GEMINI_API_KEY` or `GOOGLE_API_KEY` will work.
 - `gpt-4.1-nano` (Fast)
 
 **Setup:**
+
 1. Sign up at [platform.openai.com](https://platform.openai.com)
 2. Create an API key under API Keys
 3. `export OPENAI_API_KEY="sk-..."`
@@ -109,11 +113,13 @@ For Gemini specifically, either `GEMINI_API_KEY` or `GOOGLE_API_KEY` will work.
 | **Models** | 3 |
 
 **Available Models:**
+
 - `gemini-2.5-pro` (Frontier)
 - `gemini-2.5-flash` (Smart)
 - `gemini-2.0-flash` (Fast)
 
 **Setup:**
+
 1. Go to [aistudio.google.com](https://aistudio.google.com)
 2. Get an API key (free tier included)
 3. `export GEMINI_API_KEY="AIza..."` or `export GOOGLE_API_KEY="AIza..."`
@@ -136,10 +142,12 @@ For Gemini specifically, either `GEMINI_API_KEY` or `GOOGLE_API_KEY` will work.
 | **Models** | 2 |
 
 **Available Models:**
+
 - `deepseek-chat` (Smart) -- DeepSeek V3
 - `deepseek-reasoner` (Smart) -- DeepSeek R1, no tool support
 
 **Setup:**
+
 1. Sign up at [platform.deepseek.com](https://platform.deepseek.com)
 2. Create an API key
 3. `export DEEPSEEK_API_KEY="sk-..."`
@@ -160,12 +168,14 @@ For Gemini specifically, either `GEMINI_API_KEY` or `GOOGLE_API_KEY` will work.
 | **Models** | 4 |
 
 **Available Models:**
+
 - `llama-3.3-70b-versatile` (Balanced)
 - `mixtral-8x7b-32768` (Balanced)
 - `llama-3.1-8b-instant` (Fast)
 - `gemma2-9b-it` (Fast)
 
 **Setup:**
+
 1. Sign up at [console.groq.com](https://console.groq.com)
 2. Create an API key
 3. `export GROQ_API_KEY="gsk_..."`
@@ -188,6 +198,7 @@ For Gemini specifically, either `GEMINI_API_KEY` or `GOOGLE_API_KEY` will work.
 | **Models** | 10 |
 
 **Available Models:**
+
 - `openrouter/google/gemini-2.5-flash` (Smart) -- cheap, fast, 1M context (default)
 - `openrouter/anthropic/claude-sonnet-4` (Smart) -- strong reasoning + tools
 - `openrouter/openai/gpt-4o` (Smart) -- GPT-4o via OpenRouter
@@ -200,6 +211,7 @@ For Gemini specifically, either `GEMINI_API_KEY` or `GOOGLE_API_KEY` will work.
 - `openrouter/deepseek/deepseek-r1` (Frontier) -- DeepSeek R1 reasoning
 
 **Setup:**
+
 1. Sign up at [openrouter.ai](https://openrouter.ai)
 2. Create an API key under Keys
 3. `export OPENROUTER_API_KEY="sk-or-..."`
@@ -222,11 +234,13 @@ For Gemini specifically, either `GEMINI_API_KEY` or `GOOGLE_API_KEY` will work.
 | **Models** | 3 |
 
 **Available Models:**
+
 - `mistral-large-latest` (Smart)
 - `codestral-latest` (Smart)
 - `mistral-small-latest` (Fast)
 
 **Setup:**
+
 1. Sign up at [console.mistral.ai](https://console.mistral.ai)
 2. Create an API key
 3. `export MISTRAL_API_KEY="..."`
@@ -247,11 +261,13 @@ For Gemini specifically, either `GEMINI_API_KEY` or `GOOGLE_API_KEY` will work.
 | **Models** | 3 |
 
 **Available Models:**
+
 - `meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo` (Frontier)
 - `Qwen/Qwen2.5-72B-Instruct-Turbo` (Smart)
 - `mistralai/Mixtral-8x22B-Instruct-v0.1` (Balanced)
 
 **Setup:**
+
 1. Sign up at [api.together.ai](https://api.together.ai)
 2. Create an API key
 3. `export TOGETHER_API_KEY="..."`
@@ -272,10 +288,12 @@ For Gemini specifically, either `GEMINI_API_KEY` or `GOOGLE_API_KEY` will work.
 | **Models** | 2 |
 
 **Available Models:**
+
 - `accounts/fireworks/models/llama-v3p1-405b-instruct` (Frontier)
 - `accounts/fireworks/models/mixtral-8x22b-instruct` (Balanced)
 
 **Setup:**
+
 1. Sign up at [fireworks.ai](https://fireworks.ai)
 2. Create an API key
 3. `export FIREWORKS_API_KEY="..."`
@@ -296,11 +314,13 @@ For Gemini specifically, either `GEMINI_API_KEY` or `GOOGLE_API_KEY` will work.
 | **Models** | 3 builtin + auto-discovered |
 
 **Available Models (builtin):**
+
 - `qwen3.5:2b` (Local)
 - `mistral:latest` (Local)
 - `phi3` (Local)
 
 **Setup:**
+
 1. Install Ollama from [ollama.com](https://ollama.com)
 2. Pull a model: `ollama pull qwen3.5:2b`
 3. Start the server: `ollama serve`
@@ -324,9 +344,11 @@ For Gemini specifically, either `GEMINI_API_KEY` or `GOOGLE_API_KEY` will work.
 | **Models** | 1 builtin + auto-discovered |
 
 **Available Models (builtin):**
+
 - `vllm-local` (Local)
 
 **Setup:**
+
 1. Install vLLM: `pip install vllm`
 2. Start the server: `python -m vllm.entrypoints.openai.api_server --model <model-name>`
 3. No env var needed
@@ -347,9 +369,11 @@ For Gemini specifically, either `GEMINI_API_KEY` or `GOOGLE_API_KEY` will work.
 | **Models** | 1 builtin + auto-discovered |
 
 **Available Models (builtin):**
+
 - `lmstudio-local` (Local)
 
 **Setup:**
+
 1. Download LM Studio from [lmstudio.ai](https://lmstudio.ai)
 2. Download a model from the built-in model browser
 3. Start the local server from the "Local Server" tab
@@ -371,10 +395,12 @@ For Gemini specifically, either `GEMINI_API_KEY` or `GOOGLE_API_KEY` will work.
 | **Models** | 2 |
 
 **Available Models:**
+
 - `sonar-pro` (Smart) -- online search-augmented
 - `sonar` (Balanced) -- online search-augmented
 
 **Setup:**
+
 1. Sign up at [perplexity.ai](https://www.perplexity.ai)
 2. Go to API settings and generate a key
 3. `export PERPLEXITY_API_KEY="pplx-..."`
@@ -397,10 +423,12 @@ For Gemini specifically, either `GEMINI_API_KEY` or `GOOGLE_API_KEY` will work.
 | **Models** | 2 |
 
 **Available Models:**
+
 - `command-r-plus` (Smart)
 - `command-r` (Balanced)
 
 **Setup:**
+
 1. Sign up at [dashboard.cohere.com](https://dashboard.cohere.com)
 2. Create an API key
 3. `export COHERE_API_KEY="..."`
@@ -421,9 +449,11 @@ For Gemini specifically, either `GEMINI_API_KEY` or `GOOGLE_API_KEY` will work.
 | **Models** | 1 |
 
 **Available Models:**
+
 - `jamba-1.5-large` (Smart)
 
 **Setup:**
+
 1. Sign up at [studio.ai21.com](https://studio.ai21.com)
 2. Create an API key
 3. `export AI21_API_KEY="..."`
@@ -444,10 +474,12 @@ For Gemini specifically, either `GEMINI_API_KEY` or `GOOGLE_API_KEY` will work.
 | **Models** | 2 |
 
 **Available Models:**
+
 - `cerebras/llama3.3-70b` (Balanced)
 - `cerebras/llama3.1-8b` (Fast)
 
 **Setup:**
+
 1. Sign up at [cloud.cerebras.ai](https://cloud.cerebras.ai)
 2. Create an API key
 3. `export CEREBRAS_API_KEY="..."`
@@ -470,9 +502,11 @@ For Gemini specifically, either `GEMINI_API_KEY` or `GOOGLE_API_KEY` will work.
 | **Models** | 1 |
 
 **Available Models:**
+
 - `sambanova/llama-3.3-70b` (Balanced)
 
 **Setup:**
+
 1. Sign up at [cloud.sambanova.ai](https://cloud.sambanova.ai)
 2. Create an API key
 3. `export SAMBANOVA_API_KEY="..."`
@@ -493,9 +527,11 @@ For Gemini specifically, either `GEMINI_API_KEY` or `GOOGLE_API_KEY` will work.
 | **Models** | 1 |
 
 **Available Models:**
+
 - `hf/meta-llama/Llama-3.3-70B-Instruct` (Balanced)
 
 **Setup:**
+
 1. Sign up at [huggingface.co](https://huggingface.co)
 2. Create a token under Settings > Access Tokens
 3. `export HF_API_KEY="hf_..."`
@@ -516,10 +552,12 @@ For Gemini specifically, either `GEMINI_API_KEY` or `GOOGLE_API_KEY` will work.
 | **Models** | 2 |
 
 **Available Models:**
+
 - `grok-2` (Smart) -- supports vision
 - `grok-2-mini` (Fast)
 
 **Setup:**
+
 1. Sign up at [console.x.ai](https://console.x.ai)
 2. Create an API key
 3. `export XAI_API_KEY="xai-..."`
@@ -540,9 +578,11 @@ For Gemini specifically, either `GEMINI_API_KEY` or `GOOGLE_API_KEY` will work.
 | **Models** | 1 |
 
 **Available Models:**
+
 - `replicate/meta-llama-3.3-70b-instruct` (Balanced)
 
 **Setup:**
+
 1. Sign up at [replicate.com](https://replicate.com)
 2. Go to Account > API Tokens
 3. `export REPLICATE_API_TOKEN="r8_..."`
@@ -620,6 +660,7 @@ The complete catalog of all 51 builtin models, sorted by provider. Pricing is pe
 | **Local** | Self-hosted, zero cost | Privacy-first, offline, development |
 
 **Notes:**
+
 - Local providers (Ollama, vLLM, LM Studio) auto-discover models at runtime. Any model you download and serve will be merged into the catalog with `Local` tier and zero cost.
 - The 46 entries above are the builtin models. The total of 51 referenced in the catalog includes runtime auto-discovered models that vary per installation.
 
@@ -736,6 +777,7 @@ complex_threshold = 500
 ```
 
 The router also integrates with the model catalog:
+
 - **`validate_models()`** checks that all configured model IDs exist in the catalog
 - **`resolve_aliases()`** expands aliases to canonical IDs (e.g., `"sonnet"` becomes `"claude-sonnet-4-20250514"`)
 
@@ -847,6 +889,7 @@ GET /api/models
 Returns the complete model catalog with metadata, pricing, and feature flags.
 
 **Response:**
+
 ```json
 [
   {
@@ -888,6 +931,7 @@ GET /api/models/aliases
 Returns a map of all alias-to-canonical-ID mappings.
 
 **Response:**
+
 ```json
 {
   "sonnet": "claude-sonnet-4-20250514",
@@ -906,6 +950,7 @@ GET /api/providers
 Returns all 20 providers with auth status and model counts.
 
 **Response:**
+
 ```json
 [
   {
@@ -973,6 +1018,7 @@ Lists all available models with their tier, provider, and context window. Only s
 ```
 
 Example output:
+
 ```
 Available models (12):
 
@@ -1005,6 +1051,7 @@ Lists all 20 providers with their authentication status.
 ```
 
 Example output:
+
 ```
 LLM Providers (20):
 

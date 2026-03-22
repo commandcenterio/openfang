@@ -11366,6 +11366,9 @@ fn remove_toml_section(content: &str, section: &str) -> String {
 #[cfg(test)]
 mod channel_config_tests {
     use super::*;
+    use axum::body::to_bytes;
+    use openfang_types::agent::{AgentEntry, AgentManifest, AgentMode, AgentState, ModelConfig, SessionId};
+    use openfang_types::config::{DefaultModelConfig, KernelConfig};
 
     #[test]
     fn test_is_channel_configured_wecom_none() {
@@ -11410,5 +11413,88 @@ mod channel_config_tests {
                 .unwrap()
                 .required
         );
+    }
+
+    #[tokio::test]
+    async fn test_list_agents_shows_effective_model_for_restored_default_agent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home_dir = tmp.path().join("openfang-api-list-agents-default-display-test");
+        std::fs::create_dir_all(home_dir.join("data")).unwrap();
+        let db_path = home_dir.join("data").join("openfang.db");
+
+        let config = KernelConfig {
+            home_dir: home_dir.clone(),
+            data_dir: home_dir.join("data"),
+            default_model: DefaultModelConfig {
+                provider: "ollama".to_string(),
+                model: "qwen3.5:2b".to_string(),
+                api_key_env: String::new(),
+                base_url: None,
+            },
+            ..KernelConfig::default()
+        };
+
+        {
+            let memory = openfang_memory::MemorySubstrate::open(&db_path, 0.05).unwrap();
+            let entry = AgentEntry {
+                id: openfang_types::agent::AgentId::new(),
+                name: "assistant".to_string(),
+                manifest: AgentManifest {
+                    name: "assistant".to_string(),
+                    description: "Persisted default placeholders".to_string(),
+                    model: ModelConfig {
+                        provider: "default".to_string(),
+                        model: "default".to_string(),
+                        api_key_env: None,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                state: AgentState::Suspended,
+                mode: AgentMode::default(),
+                created_at: chrono::Utc::now(),
+                last_active: chrono::Utc::now(),
+                parent: None,
+                children: vec![],
+                session_id: SessionId::new(),
+                tags: vec![],
+                identity: Default::default(),
+                onboarding_completed: false,
+                onboarding_completed_at: None,
+            };
+            memory.save_agent(&entry).unwrap();
+        }
+
+        let kernel = Arc::new(OpenFangKernel::boot_with_config(config).expect("Kernel should boot"));
+        let restored = kernel
+            .registry
+            .find_by_name("assistant")
+            .expect("assistant should be restored");
+        assert_eq!(restored.manifest.model.provider, "default");
+        assert_eq!(restored.manifest.model.model, "default");
+
+        let state = Arc::new(AppState {
+            kernel: Arc::clone(&kernel),
+            started_at: Instant::now(),
+            peer_registry: None,
+            bridge_manager: tokio::sync::Mutex::new(None),
+            channels_config: tokio::sync::RwLock::new(kernel.config.channels.clone()),
+            shutdown_notify: Arc::new(tokio::sync::Notify::new()),
+            clawhub_cache: DashMap::new(),
+            provider_probe_cache: openfang_runtime::provider_health::ProbeCache::default(),
+        });
+
+        let response = list_agents(State(state)).await.into_response();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let assistant = json
+            .as_array()
+            .and_then(|agents| agents.iter().find(|agent| agent["name"] == "assistant"))
+            .expect("assistant should appear in API response");
+
+        assert_eq!(assistant["model_provider"], "ollama");
+        assert_eq!(assistant["model_name"], "qwen3.5:2b");
+
+        kernel.shutdown();
     }
 }

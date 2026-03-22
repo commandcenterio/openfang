@@ -36,6 +36,7 @@ The Model Context Protocol (MCP) is a JSON-RPC 2.0 based protocol that standardi
 OpenFang implements MCP protocol version `2024-11-05`.
 
 **Source files:**
+
 - Client: `crates/openfang-runtime/src/mcp.rs`
 - Server handler: `crates/openfang-runtime/src/mcp_server.rs`
 - CLI server: `crates/openfang-cli/src/mcp.rs`
@@ -98,10 +99,12 @@ url = "https://mcp.example.com/api"
 All tools discovered from MCP servers are namespaced using the pattern `mcp_{server}_{tool}` to prevent collisions with built-in tools or tools from other servers. Names are normalized to lowercase with hyphens replaced by underscores.
 
 Examples:
+
 - Server `github`, tool `create_issue` becomes `mcp_github_create_issue`
 - Server `my-server`, tool `do_thing` becomes `mcp_my_server_do_thing`
 
 Helper functions (exported from `openfang_runtime::mcp`):
+
 - `format_mcp_tool_name(server, tool)` -- builds the namespaced name
 - `is_mcp_tool(name)` -- checks if a tool name starts with `mcp_`
 - `extract_mcp_server(tool_name)` -- extracts the server name from a namespaced tool
@@ -179,6 +182,7 @@ openfang mcp
 ```
 
 This command:
+
 1. Checks if an OpenFang daemon is running (via `find_daemon()`)
 2. If found, proxies all tool calls to the daemon via its HTTP API
 3. If no daemon is running, boots an in-process kernel as a fallback
@@ -186,6 +190,7 @@ This command:
 5. Writes Content-Length framed JSON-RPC responses to stdout
 
 The MCP server uses `McpBackend` which supports two modes:
+
 - `McpBackend::Daemon` -- forwards requests to a running OpenFang daemon via HTTP
 - `McpBackend::InProcess` -- boots a full kernel when no daemon is available
 
@@ -462,6 +467,7 @@ OpenFang implements A2A in both directions:
 - **As a client**: Discovers external A2A agents at boot time, sends tasks to them, and polls for results.
 
 **Source files:**
+
 - Protocol types and logic: `crates/openfang-runtime/src/a2a.rs`
 - API routes: `crates/openfang-api/src/routes.rs`
 - Config types: `crates/openfang-types/src/config.rs` (`A2aConfig`, `ExternalAgent`)
@@ -558,11 +564,13 @@ pub struct A2aTaskStore {
 ```
 
 Key properties:
+
 - **Bounded**: When the store reaches `max_tasks`, it evicts the oldest completed/failed/cancelled task (FIFO)
 - **Thread-safe**: Uses `Mutex<HashMap>` for concurrent access
 - **Kernel field**: Stored as `kernel.a2a_task_store`
 
 Methods on `A2aTaskStore`:
+
 - `insert(task)` -- add a new task, evicting old ones if at capacity
 - `get(task_id)` -- retrieve a task by ID
 - `update_status(task_id, status)` -- change a task's status
@@ -848,6 +856,7 @@ If `a2a` is `None` (not present in config), all A2A features are disabled. The A
 ### Kernel-Level Protection
 
 Both MCP and A2A tool execution flows through the same security pipeline as all other tool calls:
+
 - Capability-based access control (agents only get tools they are authorized for)
 - Tool result truncation (50K character hard cap)
 - Universal 60-second tool execution timeout

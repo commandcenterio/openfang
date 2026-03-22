@@ -1752,16 +1752,16 @@ impl OpenFangKernel {
 
         let tools = self.available_tools(agent_id);
         let tools = entry.mode.filter_tools(tools);
-        let driver = self.resolve_driver(&entry.manifest)?;
+        let mut manifest = self.resolve_manifest_for_execution(&entry.manifest);
+        let driver = self.resolve_driver(&manifest)?;
 
         // Look up model's actual context window from the catalog
         let ctx_window = self.model_catalog.read().ok().and_then(|cat| {
-            cat.find_model(&entry.manifest.model.model)
+            cat.find_model(&manifest.model.model)
                 .map(|m| m.context_window as usize)
         });
 
         let (tx, rx) = tokio::sync::mpsc::channel::<StreamEvent>(64);
-        let mut manifest = entry.manifest.clone();
 
         // Lazy backfill: create workspace for existing agents spawned before workspaces
         if manifest.workspace.is_none() {
@@ -2303,8 +2303,8 @@ impl OpenFangKernel {
             "Tools selected for LLM request"
         );
 
-        // Apply model routing if configured (disabled in Stable mode)
-        let mut manifest = entry.manifest.clone();
+        // Apply execution-time model resolution and routing (disabled in Stable mode)
+        let mut manifest = self.resolve_manifest_for_execution(&entry.manifest);
 
         // Lazy backfill: create workspace for existing agents spawned before workspaces
         if manifest.workspace.is_none() {
@@ -4657,6 +4657,23 @@ impl OpenFangKernel {
         )
     }
 
+    fn resolve_manifest_for_execution(&self, manifest: &AgentManifest) -> AgentManifest {
+        let mut resolved_manifest = manifest.clone();
+        let resolved_target = self.resolve_model_target(
+            &resolved_manifest.model.provider,
+            &resolved_manifest.model.model,
+            resolved_manifest.model.api_key_env.as_ref(),
+            resolved_manifest.model.base_url.as_ref(),
+        );
+
+        resolved_manifest.model.provider = resolved_target.provider;
+        resolved_manifest.model.model = resolved_target.model;
+        resolved_manifest.model.api_key_env = resolved_target.api_key_env;
+        resolved_manifest.model.base_url = resolved_target.base_url;
+
+        resolved_manifest
+    }
+
     fn resolve_driver(&self, manifest: &AgentManifest) -> KernelResult<Arc<dyn LlmDriver>> {
         let resolved_primary = self.resolve_model_target(
             &manifest.model.provider,
@@ -6812,6 +6829,81 @@ mod tests {
             restored.manifest.model.api_key_env.as_deref(),
             Some("ANTHROPIC_API_KEY")
         );
+
+        kernel.shutdown();
+    }
+
+    #[test]
+    fn test_execution_resolution_uses_effective_defaults_without_mutating_restored_agent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home_dir = tmp
+            .path()
+            .join("openfang-kernel-execution-default-resolution-test");
+        std::fs::create_dir_all(home_dir.join("data")).unwrap();
+        let db_path = home_dir.join("data").join("openfang.db");
+
+        let config = KernelConfig {
+            home_dir: home_dir.clone(),
+            data_dir: home_dir.join("data"),
+            default_model: DefaultModelConfig {
+                provider: "ollama".to_string(),
+                model: "qwen3.5:2b".to_string(),
+                api_key_env: String::new(),
+                base_url: None,
+            },
+            ..KernelConfig::default()
+        };
+
+        {
+            let memory = openfang_memory::MemorySubstrate::open(&db_path, 0.05).unwrap();
+            let entry = openfang_types::agent::AgentEntry {
+                id: openfang_types::agent::AgentId::new(),
+                name: "restored-default-agent".to_string(),
+                manifest: AgentManifest {
+                    name: "restored-default-agent".to_string(),
+                    description: "Persisted default placeholders".to_string(),
+                    model: openfang_types::agent::ModelConfig {
+                        provider: "default".to_string(),
+                        model: "default".to_string(),
+                        api_key_env: None,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                state: AgentState::Suspended,
+                mode: openfang_types::agent::AgentMode::default(),
+                created_at: chrono::Utc::now(),
+                last_active: chrono::Utc::now(),
+                parent: None,
+                children: vec![],
+                session_id: openfang_types::agent::SessionId::new(),
+                tags: vec![],
+                identity: Default::default(),
+                onboarding_completed: false,
+                onboarding_completed_at: None,
+            };
+            memory.save_agent(&entry).unwrap();
+        }
+
+        let kernel = OpenFangKernel::boot_with_config(config).expect("Kernel should boot");
+        let restored = kernel
+            .registry
+            .find_by_name("restored-default-agent")
+            .expect("agent should be restored");
+
+        assert_eq!(restored.manifest.model.provider, "default");
+        assert_eq!(restored.manifest.model.model, "default");
+
+        let execution_manifest = kernel.resolve_manifest_for_execution(&restored.manifest);
+        assert_eq!(execution_manifest.model.provider, "ollama");
+        assert_eq!(execution_manifest.model.model, "qwen3.5:2b");
+
+        let restored_after = kernel
+            .registry
+            .find_by_name("restored-default-agent")
+            .expect("agent should remain restored");
+        assert_eq!(restored_after.manifest.model.provider, "default");
+        assert_eq!(restored_after.manifest.model.model, "default");
 
         kernel.shutdown();
     }
