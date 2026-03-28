@@ -69,6 +69,37 @@ fn phantom_action_detected(text: &str) -> bool {
 const TOOL_ERROR_GUIDANCE: &str =
     "[System: One or more tool calls failed. Failed tools did not produce usable data. Do NOT invent missing results, cite nonexistent search results, or pretend failed tools succeeded. If your next steps depend on a failed tool, either retry with a materially different approach or explain the failure to the user and stop. Do not write files, store memory, or take downstream actions based on failed tool outputs.]";
 
+const TOOL_SUMMARY_RETRY_PROMPT: &str =
+    "[System: You already have the tool results needed for this turn. Do not call any more tools. Write a concise user-facing summary based only on the tool results above. If the requested file, folder, or data was not found, say that clearly.]";
+
+fn successful_agent_send_summary(
+    tool_calls: &[ToolCall],
+    tool_result_blocks: &[ContentBlock],
+) -> Option<String> {
+    if tool_calls.is_empty() || tool_calls.iter().any(|tool| tool.name != "agent_send") {
+        return None;
+    }
+
+    let summaries: Vec<String> = tool_result_blocks
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::ToolResult {
+                content,
+                is_error,
+                ..
+            } if !*is_error && !content.trim().is_empty() => Some(content.trim().to_string()),
+            ContentBlock::ToolResult { is_error: true, .. } => Some(String::new()),
+            _ => None,
+        })
+        .collect();
+
+    if summaries.is_empty() || summaries.iter().any(|summary| summary.is_empty()) {
+        return None;
+    }
+
+    Some(summaries.join("\n\n"))
+}
+
 fn append_tool_error_guidance(tool_result_blocks: &mut Vec<ContentBlock>) {
     let has_tool_error = tool_result_blocks
         .iter()
@@ -350,6 +381,7 @@ pub async fn run_agent_loop(
     let ctx_window = context_window_tokens.unwrap_or(DEFAULT_CONTEXT_WINDOW);
     let context_budget = ContextBudget::new(ctx_window);
     let mut any_tools_executed = false;
+    let mut forced_summary_retry = false;
 
     for iteration in 0..max_iterations {
         debug!(iteration, "Agent loop iteration");
@@ -482,6 +514,21 @@ pub async fn run_agent_loop(
                         messages.push(Message::user("Please provide your response.".to_string()));
                         continue;
                     }
+                }
+
+                if text.trim().is_empty() && any_tools_executed && !forced_summary_retry {
+                    warn!(
+                        agent = %manifest.name,
+                        iteration,
+                        input_tokens = total_usage.input_tokens,
+                        output_tokens = total_usage.output_tokens,
+                        "Empty response after tool use — forcing one summary retry"
+                    );
+                    forced_summary_retry = true;
+                    messages = crate::session_repair::validate_and_repair(&messages);
+                    messages.push(Message::assistant("[no response after tool execution]".to_string()));
+                    messages.push(Message::user(TOOL_SUMMARY_RETRY_PROMPT.to_string()));
+                    continue;
                 }
 
                 // Guard against empty response — covers both iteration 0 and post-tool cycles
@@ -789,6 +836,96 @@ pub async fn run_agent_loop(
                         tool_name: tool_call.name.clone(),
                         content: final_content,
                         is_error: result.is_error,
+                    });
+                }
+
+                if let Some(agent_send_response) =
+                    successful_agent_send_summary(&response.tool_calls, &tool_result_blocks)
+                {
+                    let tool_results_msg = Message {
+                        role: Role::User,
+                        content: MessageContent::Blocks(tool_result_blocks),
+                    };
+                    session.messages.push(tool_results_msg);
+                    session
+                        .messages
+                        .push(Message::assistant(agent_send_response.clone()));
+
+                    crate::session_repair::prune_heartbeat_turns(&mut session.messages, 10);
+
+                    memory
+                        .save_session_async(session)
+                        .await
+                        .map_err(|e| OpenFangError::Memory(e.to_string()))?;
+
+                    let interaction_text = format!(
+                        "User asked: {}\nI responded: {}",
+                        user_message, agent_send_response
+                    );
+                    if let Some(emb) = embedding_driver {
+                        match emb.embed_one(&interaction_text).await {
+                            Ok(vec) => {
+                                let _ = memory
+                                    .remember_with_embedding_async(
+                                        session.agent_id,
+                                        &interaction_text,
+                                        MemorySource::Conversation,
+                                        "episodic",
+                                        HashMap::new(),
+                                        Some(&vec),
+                                    )
+                                    .await;
+                            }
+                            Err(e) => {
+                                warn!("Embedding for remember failed: {e}");
+                                let _ = memory
+                                    .remember(
+                                        session.agent_id,
+                                        &interaction_text,
+                                        MemorySource::Conversation,
+                                        "episodic",
+                                        HashMap::new(),
+                                    )
+                                    .await;
+                            }
+                        }
+                    } else {
+                        let _ = memory
+                            .remember(
+                                session.agent_id,
+                                &interaction_text,
+                                MemorySource::Conversation,
+                                "episodic",
+                                HashMap::new(),
+                            )
+                            .await;
+                    }
+
+                    if let Some(cb) = on_phase {
+                        cb(LoopPhase::Done);
+                    }
+
+                    if let Some(hook_reg) = hooks {
+                        let ctx = crate::hooks::HookContext {
+                            agent_name: &manifest.name,
+                            agent_id: agent_id_str.as_str(),
+                            event: openfang_types::agent::HookEvent::AgentLoopEnd,
+                            data: serde_json::json!({
+                                "iterations": iteration + 1,
+                                "response_length": agent_send_response.len(),
+                                "completion_mode": "direct_agent_send",
+                            }),
+                        };
+                        let _ = hook_reg.fire(&ctx);
+                    }
+
+                    return Ok(AgentLoopResult {
+                        response: agent_send_response,
+                        total_usage,
+                        iterations: iteration + 1,
+                        cost_usd: None,
+                        silent: false,
+                        directives: Default::default(),
                     });
                 }
 
@@ -1358,6 +1495,7 @@ pub async fn run_agent_loop_streaming(
     let ctx_window = context_window_tokens.unwrap_or(DEFAULT_CONTEXT_WINDOW);
     let context_budget = ContextBudget::new(ctx_window);
     let mut any_tools_executed = false;
+    let mut forced_summary_retry = false;
 
     for iteration in 0..max_iterations {
         debug!(iteration, "Streaming agent loop iteration");
@@ -1510,6 +1648,21 @@ pub async fn run_agent_loop_streaming(
                         messages.push(Message::user("Please provide your response.".to_string()));
                         continue;
                     }
+                }
+
+                if text.trim().is_empty() && any_tools_executed && !forced_summary_retry {
+                    warn!(
+                        agent = %manifest.name,
+                        iteration,
+                        input_tokens = total_usage.input_tokens,
+                        output_tokens = total_usage.output_tokens,
+                        "Empty response after tool use (streaming) — forcing one summary retry"
+                    );
+                    forced_summary_retry = true;
+                    messages = crate::session_repair::validate_and_repair(&messages);
+                    messages.push(Message::assistant("[no response after tool execution]".to_string()));
+                    messages.push(Message::user(TOOL_SUMMARY_RETRY_PROMPT.to_string()));
+                    continue;
                 }
 
                 // Guard against empty response — covers both iteration 0 and post-tool cycles
@@ -1809,6 +1962,108 @@ pub async fn run_agent_loop_streaming(
                         tool_name: tool_call.name.clone(),
                         content: final_content,
                         is_error: result.is_error,
+                    });
+                }
+
+                if let Some(agent_send_response) =
+                    successful_agent_send_summary(&response.tool_calls, &tool_result_blocks)
+                {
+                    let tool_results_msg = Message {
+                        role: Role::User,
+                        content: MessageContent::Blocks(tool_result_blocks),
+                    };
+                    session.messages.push(tool_results_msg);
+                    session
+                        .messages
+                        .push(Message::assistant(agent_send_response.clone()));
+
+                    crate::session_repair::prune_heartbeat_turns(&mut session.messages, 10);
+
+                    memory
+                        .save_session_async(session)
+                        .await
+                        .map_err(|e| OpenFangError::Memory(e.to_string()))?;
+
+                    let interaction_text = format!(
+                        "User asked: {}\nI responded: {}",
+                        user_message, agent_send_response
+                    );
+                    if let Some(emb) = embedding_driver {
+                        match emb.embed_one(&interaction_text).await {
+                            Ok(vec) => {
+                                let _ = memory
+                                    .remember_with_embedding_async(
+                                        session.agent_id,
+                                        &interaction_text,
+                                        MemorySource::Conversation,
+                                        "episodic",
+                                        HashMap::new(),
+                                        Some(&vec),
+                                    )
+                                    .await;
+                            }
+                            Err(e) => {
+                                warn!("Embedding for remember failed (streaming): {e}");
+                                let _ = memory
+                                    .remember(
+                                        session.agent_id,
+                                        &interaction_text,
+                                        MemorySource::Conversation,
+                                        "episodic",
+                                        HashMap::new(),
+                                    )
+                                    .await;
+                            }
+                        }
+                    } else {
+                        let _ = memory
+                            .remember(
+                                session.agent_id,
+                                &interaction_text,
+                                MemorySource::Conversation,
+                                "episodic",
+                                HashMap::new(),
+                            )
+                            .await;
+                    }
+
+                    let _ = stream_tx
+                        .send(StreamEvent::TextDelta {
+                            text: agent_send_response.clone(),
+                        })
+                        .await;
+                    let _ = stream_tx
+                        .send(StreamEvent::ContentComplete {
+                            stop_reason: StopReason::EndTurn,
+                            usage: total_usage,
+                        })
+                        .await;
+
+                    if let Some(cb) = on_phase {
+                        cb(LoopPhase::Done);
+                    }
+
+                    if let Some(hook_reg) = hooks {
+                        let ctx = crate::hooks::HookContext {
+                            agent_name: &manifest.name,
+                            agent_id: agent_id_str.as_str(),
+                            event: openfang_types::agent::HookEvent::AgentLoopEnd,
+                            data: serde_json::json!({
+                                "iterations": iteration + 1,
+                                "response_length": agent_send_response.len(),
+                                "completion_mode": "direct_agent_send",
+                            }),
+                        };
+                        let _ = hook_reg.fire(&ctx);
+                    }
+
+                    return Ok(AgentLoopResult {
+                        response: agent_send_response,
+                        total_usage,
+                        iterations: iteration + 1,
+                        cost_usd: None,
+                        silent: false,
+                        directives: Default::default(),
                     });
                 }
 

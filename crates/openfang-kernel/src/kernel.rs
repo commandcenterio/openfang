@@ -1,6 +1,8 @@
 //! OpenFangKernel — assembles all subsystems and provides the main API.
 
-use crate::agent_defaults::build_default_assistant_manifest;
+use crate::agent_defaults::{
+    build_default_assistant_manifest, refresh_default_assistant_manifest,
+};
 use crate::auth::AuthManager;
 use crate::background::{self, BackgroundExecutor};
 use crate::background_policy::collect_background_agents;
@@ -46,6 +48,39 @@ use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock, Weak};
 use tracing::{debug, info, warn};
+
+fn classify_assistant_vault_delegate(message: &str) -> Option<&'static str> {
+    let lower = message.to_lowercase();
+    let mentions_vault = ["obsidian", "vault", "knowledge base", "markdown knowledge"]
+        .iter()
+        .any(|term| lower.contains(term));
+    if !mentions_vault {
+        return None;
+    }
+
+    let is_mutation = [
+        "create ",
+        "add ",
+        "write ",
+        "append ",
+        "edit ",
+        "update ",
+        "rewrite ",
+        "rename ",
+        "move ",
+        "delete ",
+        "remove ",
+        "modify ",
+    ]
+    .iter()
+    .any(|term| lower.contains(term));
+
+    Some(if is_mutation {
+        "obsidian-vault-writer"
+    } else {
+        "obsidian-vault-reader"
+    })
+}
 
 fn import_manifest_backed_agents(kernel: &OpenFangKernel) {
     let agents_dir = kernel.config.home_dir.join("agents");
@@ -1223,6 +1258,16 @@ impl OpenFangKernel {
                                 );
                             }
                         }
+                    } else if let Some(refreshed_manifest) = refresh_default_assistant_manifest(
+                        &entry.manifest,
+                        &kernel.config.default_model,
+                    ) {
+                        info!(agent = %name, "Refreshing restored default assistant from bundled template");
+                        entry.manifest = refreshed_manifest;
+                        entry.tags = entry.manifest.tags.clone();
+                        if let Err(e) = kernel.memory.save_agent(&entry) {
+                            warn!(agent = %name, "Failed to persist refreshed default assistant manifest: {e}");
+                        }
                     }
 
                     // Re-grant capabilities
@@ -1555,6 +1600,61 @@ impl OpenFangKernel {
             KernelError::OpenFang(OpenFangError::AgentNotFound(agent_id.to_string()))
         })?;
 
+        if entry.name == "assistant" && content_blocks.is_none() {
+            if let Some(target_name) = classify_assistant_vault_delegate(message) {
+                if let Some(target_entry) = self.registry.find_by_name(target_name) {
+                    info!(
+                        agent = %entry.name,
+                        target = %target_name,
+                        "Routing vault request directly to specialist before LLM"
+                    );
+
+                    let delegated = Box::pin(self.send_message_with_handle(
+                        target_entry.id,
+                        message,
+                        kernel_handle.clone(),
+                        sender_id.clone(),
+                        sender_name.clone(),
+                    ))
+                    .await?;
+
+                    let mut session = self
+                        .memory
+                        .get_session(entry.session_id)
+                        .map_err(KernelError::OpenFang)?
+                        .unwrap_or_else(|| openfang_memory::session::Session {
+                            id: entry.session_id,
+                            agent_id,
+                            messages: Vec::new(),
+                            context_window_tokens: 0,
+                            label: None,
+                        });
+                    session
+                        .messages
+                        .push(openfang_types::message::Message::user(message));
+                    session.messages.push(openfang_types::message::Message::assistant(
+                        delegated.response.clone(),
+                    ));
+                    self.memory
+                        .save_session_async(&session)
+                        .await
+                        .map_err(|e| {
+                            KernelError::OpenFang(OpenFangError::Memory(e.to_string()))
+                        })?;
+
+                    self.scheduler.record_usage(agent_id, &delegated.total_usage);
+                    let _ = self.registry.set_state(agent_id, AgentState::Running);
+
+                    return Ok(delegated);
+                }
+            }
+        }
+
+        // Refresh heartbeat before starting potentially long-running work so the
+        // watchdog does not mark an actively processing agent as crashed based
+        // on stale `last_active` from a previous turn.
+        let _ = self.registry.set_state(agent_id, AgentState::Running);
+
         // Dispatch based on module type
         let result = if entry.manifest.module.starts_with("wasm:") {
             self.execute_wasm_agent(&entry, message, kernel_handle)
@@ -1641,6 +1741,9 @@ impl OpenFangKernel {
         let entry = self.registry.get(agent_id).ok_or_else(|| {
             KernelError::OpenFang(OpenFangError::AgentNotFound(agent_id.to_string()))
         })?;
+
+        // Refresh heartbeat immediately when a new streamed turn begins.
+        let _ = self.registry.set_state(agent_id, AgentState::Running);
 
         let is_wasm = entry.manifest.module.starts_with("wasm:");
         let is_python = entry.manifest.module.starts_with("python:");
@@ -6934,6 +7037,97 @@ mod tests {
     }
 
     #[test]
+    fn test_boot_refreshes_restored_default_assistant_manifest_from_bundle() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home_dir = tmp
+            .path()
+            .join("openfang-kernel-refresh-default-assistant-test");
+        std::fs::create_dir_all(home_dir.join("data")).unwrap();
+        let db_path = home_dir.join("data").join("openfang.db");
+
+        let config = KernelConfig {
+            home_dir: home_dir.clone(),
+            data_dir: home_dir.join("data"),
+            default_model: DefaultModelConfig {
+                provider: "ollama".to_string(),
+                model: "qwen3.5:2b".to_string(),
+                api_key_env: String::new(),
+                base_url: None,
+            },
+            ..KernelConfig::default()
+        };
+
+        {
+            let memory = openfang_memory::MemorySubstrate::open(&db_path, 0.05).unwrap();
+            let entry = openfang_types::agent::AgentEntry {
+                id: openfang_types::agent::AgentId::new(),
+                name: "assistant".to_string(),
+                manifest: AgentManifest {
+                    name: "assistant".to_string(),
+                    description: "Old default assistant".to_string(),
+                    model: openfang_types::agent::ModelConfig {
+                        provider: "anthropic".to_string(),
+                        model: "claude-sonnet-4-20250514".to_string(),
+                        system_prompt: "You are an outdated assistant.".to_string(),
+                        ..Default::default()
+                    },
+                    capabilities: openfang_types::agent::ManifestCapabilities {
+                        tools: vec!["file_read".to_string()],
+                        ..Default::default()
+                    },
+                    tags: vec!["general".to_string(), "assistant".to_string(), "default".to_string()],
+                    ..Default::default()
+                },
+                state: AgentState::Running,
+                mode: openfang_types::agent::AgentMode::default(),
+                created_at: chrono::Utc::now(),
+                last_active: chrono::Utc::now(),
+                parent: None,
+                children: vec![],
+                session_id: openfang_types::agent::SessionId::new(),
+                tags: vec!["general".to_string(), "assistant".to_string(), "default".to_string()],
+                identity: Default::default(),
+                onboarding_completed: false,
+                onboarding_completed_at: None,
+            };
+            memory.save_agent(&entry).unwrap();
+        }
+
+        let kernel = OpenFangKernel::boot_with_config(config).expect("Kernel should boot");
+        let assistant = kernel
+            .registry
+            .find_by_name("assistant")
+            .expect("assistant should be restored");
+
+        assert_eq!(assistant.manifest.model.provider, "anthropic");
+        assert_eq!(assistant.manifest.model.model, "claude-sonnet-4-20250514");
+        assert!(assistant
+            .manifest
+            .model
+            .system_prompt
+            .contains("obsidian-vault-reader"));
+        assert!(assistant
+            .manifest
+            .capabilities
+            .tools
+            .iter()
+            .any(|tool| tool == "agent_send"));
+
+        let persisted = kernel.memory.load_all_agents().unwrap();
+        let persisted_assistant = persisted
+            .into_iter()
+            .find(|entry| entry.name == "assistant")
+            .expect("assistant should be persisted");
+        assert!(persisted_assistant
+            .manifest
+            .model
+            .system_prompt
+            .contains("obsidian-vault-reader"));
+
+        kernel.shutdown();
+    }
+
+    #[test]
     fn test_boot_preserves_running_state_for_restored_agents() {
         let tmp = tempfile::tempdir().unwrap();
         let home_dir = tmp.path().join("openfang-kernel-restore-running-state-test");
@@ -6965,6 +7159,34 @@ mod tests {
         assert_eq!(restored.state, AgentState::Running);
 
         kernel.shutdown();
+    }
+
+    #[test]
+    fn test_classify_assistant_vault_delegate_reader() {
+        assert_eq!(
+            classify_assistant_vault_delegate(
+                "What's in the root of my Obsidian vault? Can you do a quick check?"
+            ),
+            Some("obsidian-vault-reader")
+        );
+    }
+
+    #[test]
+    fn test_classify_assistant_vault_delegate_writer() {
+        assert_eq!(
+            classify_assistant_vault_delegate(
+                "Create a new note in my Obsidian vault and add today's todo list."
+            ),
+            Some("obsidian-vault-writer")
+        );
+    }
+
+    #[test]
+    fn test_classify_assistant_vault_delegate_none() {
+        assert_eq!(
+            classify_assistant_vault_delegate("Summarize this Rust code for me."),
+            None
+        );
     }
 
     #[tokio::test]

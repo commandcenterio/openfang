@@ -44,5 +44,9 @@ listen_addr = "127.0.0.1:4200"           # OFP listen address
 # MCP server connections
 # [[mcp_servers]]
 # name = "filesystem"
+# timeout_secs = 15
+# env = []
+# [mcp_servers.transport]
+# type = "stdio"
 # command = "npx"
 # args = ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]

@@ -18,5 +18,8 @@ if [[ "${1-}" == "--build-only" ]]; then
   exit 0
 fi
 
-cargo build --release -p openfang-cli
+if [[ "${1-}" == "start" || -z "${1-}" ]]; then
+  cargo build --release -p openfang-cli
+fi
+
 exec "$BIN_PATH" "$@"

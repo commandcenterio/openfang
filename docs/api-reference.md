@@ -368,6 +368,7 @@ List execution history for a workflow.
 List all triggers. Optionally filter by agent.
 
 **Query Parameters:**
+
 - `agent_id` (optional): Filter by agent UUID
 
 **Response** `200 OK`:
@@ -1135,6 +1136,7 @@ Create a new skill from a template.
 Search the FangHub marketplace for community skills.
 
 **Query Parameters:**
+
 - `q` (required): Search query string
 - `page` (optional): Page number (default: 1)
 
@@ -1167,6 +1169,7 @@ Browse and install skills from ClawHub (OpenClaw ecosystem compatibility). All i
 Search ClawHub for compatible skills.
 
 **Query Parameters:**
+
 - `q` (required): Search query
 
 **Response** `200 OK`:
@@ -1191,6 +1194,7 @@ Search ClawHub for compatible skills.
 Browse ClawHub categories.
 
 **Query Parameters:**
+
 - `category` (optional): Filter by category
 - `page` (optional): Page number (default: 1)
 
@@ -1267,26 +1271,37 @@ List configured and connected MCP servers with their available tools.
 
 ```json
 {
-  "servers": [
+  "configured": [
+    {
+      "env": [],
+      "name": "filesystem",
+      "timeout_secs": 15,
+      "transport": {
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/alice/Notes"]
+      }
+    }
+  ],
+  "connected": [
     {
       "name": "filesystem",
-      "transport": "stdio",
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem"],
       "connected": true,
+      "tools_count": 2,
       "tools": [
         {
-          "name": "mcp_filesystem_read_file",
-          "description": "Read a file from the filesystem"
+          "name": "mcp_filesystem_read_text_file",
+          "description": "[MCP:filesystem] Read the complete contents of a file from the file system as text."
         },
         {
           "name": "mcp_filesystem_write_file",
-          "description": "Write content to a file"
+          "description": "[MCP:filesystem] Create a new file or completely overwrite an existing file with new content."
         }
       ]
     }
   ],
-  "total": 1
+  "total_configured": 1,
+  "total_connected": 1
 }
 ```
 
@@ -1450,6 +1465,7 @@ OpenFang maintains a Merkle hash chain audit trail for all security-relevant ope
 Retrieve recent audit log entries.
 
 **Query Parameters:**
+
 - `limit` (optional): Number of entries to return (default: 50, max: 500)
 
 **Response** `200 OK`:
@@ -1539,6 +1555,7 @@ Track token usage, costs, and model utilization across all agents. Powered by th
 Get overall usage statistics.
 
 **Query Parameters:**
+
 - `period` (optional): Time period (`hour`, `day`, `week`, `month`; default: `day`)
 
 **Response** `200 OK`:

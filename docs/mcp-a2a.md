@@ -352,6 +352,58 @@ command = "npx"
 args = ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/projects"]
 ```
 
+#### Obsidian Vault via `OBSIDIAN_VAULT_PATH`
+
+If you already keep your vault path in `OBSIDIAN_VAULT_PATH`, use a shell wrapper so the MCP subprocess expands the variable before launching the filesystem server:
+
+```toml
+[[mcp_servers]]
+name = "filesystem"
+timeout_secs = 15
+env = ["OBSIDIAN_VAULT_PATH"]
+
+[mcp_servers.transport]
+type = "stdio"
+command = "sh"
+args = ["-lc", "exec npx -y @modelcontextprotocol/server-filesystem \"$OBSIDIAN_VAULT_PATH\""]
+```
+
+Notes:
+
+- Define `OBSIDIAN_VAULT_PATH` in `~/.openfang/.env` or export it before starting OpenFang. The CLI loads `~/.openfang/.env`, not a repo-local `.env` file.
+- `env` only passes variables through to the subprocess. OpenFang does not expand `$OBSIDIAN_VAULT_PATH` inside `args` unless you use a shell wrapper like `sh -lc`.
+- For the narrowest write scope, point the filesystem server at a dedicated notes subdirectory instead of the whole vault.
+- On macOS, the server may canonicalize `/tmp/...` to `/private/tmp/...`. Use the allowed path returned by `mcp_filesystem_list_allowed_directories`.
+
+To keep normal vault access read-only, restrict the agent to read/list tools and keep write tools off its allowlist:
+
+```toml
+mcp_servers = ["filesystem"]
+tool_allowlist = [
+  "mcp_filesystem_list_allowed_directories",
+  "mcp_filesystem_list_directory",
+  "mcp_filesystem_directory_tree",
+  "mcp_filesystem_read_text_file",
+  "mcp_filesystem_read_multiple_files",
+  "mcp_filesystem_search_files",
+  "mcp_filesystem_get_file_info",
+]
+```
+
+Only add write tools for an explicitly approved writer agent:
+
+```toml
+mcp_servers = ["filesystem"]
+tool_allowlist = [
+  "mcp_filesystem_list_allowed_directories",
+  "mcp_filesystem_list_directory",
+  "mcp_filesystem_read_text_file",
+  "mcp_filesystem_write_file",
+  "mcp_filesystem_edit_file",
+  "mcp_filesystem_create_directory",
+]
+```
+
 #### PostgreSQL Server
 
 ```toml
